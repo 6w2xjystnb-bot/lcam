@@ -53,7 +53,15 @@ jobs:
             CODE_SIGNING_REQUIRED=NO \
             CODE_SIGN_IDENTITY="" \
             PROVISIONING_PROFILE_SPECIFIER="" \
-            | xcpretty --color --simple
+            VALIDATE_PRODUCT=NO \
+            ALWAYS_EMBED_SWIFT_STANDARD_LIBRARIES=NO \
+            STRIP_INSTALLED_PRODUCT=NO \
+            COPY_PHASE_STRIP=NO \
+            2>&1 | tee "$RUNNER_TEMP/build.log" | xcpretty --color --simple || {
+              echo "=== BUILD FAILED — full log (last 300 lines) ==="
+              tail -300 "$RUNNER_TEMP/build.log"
+              exit 1
+            }
 
       - name: Ad-hoc sign + Package IPA
         run: |
