@@ -47,56 +47,50 @@ jobs:
       # Ad-hoc: бинарник подписан codesign -s -, без Developer аккаунта.
       # Это необходимо: без подписи Mach-O линкер не финализирует бинарь,
       # что и вызывает "Bad file descriptor / (null)" при установке.
-      - name: Build for Device (arm64, ad-hoc signed)
+      # Строим без подписи — подписывать будем сами после сборки
+      - name: Build for Device (arm64, unsigned)
         run: |
-          set -o pipefail   # xcodebuild ошибки не глотаются xcpretty
+          set -o pipefail
           xcodebuild build \
             -project LCAM.xcodeproj \
             -scheme LCAM \
             -configuration Release \
             -sdk iphoneos \
             -derivedDataPath "$RUNNER_TEMP/dd" \
-            CODE_SIGN_IDENTITY="-" \
-            CODE_SIGNING_REQUIRED=YES \
-            CODE_SIGNING_ALLOWED=YES \
-            AD_HOC_CODE_SIGNING_ALLOWED=YES \
+            CODE_SIGNING_ALLOWED=NO \
+            CODE_SIGNING_REQUIRED=NO \
+            CODE_SIGN_IDENTITY="" \
             PROVISIONING_PROFILE_SPECIFIER="" \
             | xcpretty --color --simple
 
-      # Проверяем .app и пакуем → IPA
-      - name: Package IPA
+      - name: Package IPA (ad-hoc sign + zip)
         run: |
           PRODUCTS="$RUNNER_TEMP/dd/Build/Products/Release-iphoneos"
           APP=$(find "$PRODUCTS" -maxdepth 1 -name "*.app" | head -1)
 
           if [ -z "$APP" ]; then
-            echo "ERROR: .app not found in $PRODUCTS"
-            find "$RUNNER_TEMP/dd/Build/Products" -type d -name "*.app" || true
-            exit 1
+            echo "ERROR: .app not found"; ls "$PRODUCTS" || true; exit 1
           fi
 
-          echo "=== .app: $APP ==="
-          ls -la "$APP"
+          # Проверяем бинарник
+          EXEC=$(defaults read "$APP/Info.plist" CFBundleExecutable 2>/dev/null)
+          echo "App: $APP  |  Binary: $EXEC"
+          ls -lh "$APP/$EXEC" 2>/dev/null && file "$APP/$EXEC" || \
+            { echo "ERROR: binary missing"; find "$APP" -maxdepth 1; exit 1; }
 
-          # Проверяем что бинарник существует и это ARM64 Mach-O
-          EXEC=$(defaults read "$APP/Info.plist" CFBundleExecutable 2>/dev/null || echo "")
-          echo "CFBundleExecutable: '$EXEC'"
-          if [ -n "$EXEC" ] && [ -f "$APP/$EXEC" ]; then
-            file "$APP/$EXEC"
-          else
-            echo "WARNING: binary '$EXEC' not found — listing .app:"
-            find "$APP" -maxdepth 1 -type f
-          fi
+          # Ad-hoc подпись применяем ВРУЧНУЮ к готовому бинарнику
+          # (без -s - в xcodebuild, чтобы избежать input/output dependency)
+          codesign -f -s - --generate-entitlement-der "$APP" 2>/dev/null || \
+          codesign -f -s - "$APP"
+          echo "Signed: $(codesign -d "$APP" 2>&1 | head -2)"
 
-          # Упаковываем
+          # Пакуем
           mkdir -p "$RUNNER_TEMP/ipa/Payload"
           cp -r "$APP" "$RUNNER_TEMP/ipa/Payload/"
           cd "$RUNNER_TEMP/ipa"
           zip -qr "$RUNNER_TEMP/LCAM.ipa" Payload/
-
-          echo "=== IPA ready ==="
           ls -lh "$RUNNER_TEMP/LCAM.ipa"
-          unzip -l "$RUNNER_TEMP/LCAM.ipa" | head -20
+          unzip -l "$RUNNER_TEMP/LCAM.ipa" | grep -v "/$" | head -10
 
       - name: Upload IPA
         uses: actions/upload-artifact@v4

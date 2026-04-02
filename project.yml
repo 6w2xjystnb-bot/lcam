@@ -79,14 +79,6 @@ targets:
       - sdk: CoreVideo.framework
       - sdk: CoreMedia.framework
 
-    preBuildScripts:
-      - name: "SwiftLint"
-        script: |
-          if which swiftlint >/dev/null; then
-            swiftlint --fix --quiet
-          fi
-        showEnvVarsInLog: false
-
 schemes:
   LCAM:
     build:
