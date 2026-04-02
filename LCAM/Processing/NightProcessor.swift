@@ -31,15 +31,20 @@ final class NightProcessor {
     func process(frames: [AlignedFrame], settings: CameraSettings) async -> CVPixelBuffer? {
         guard !frames.isEmpty else { return nil }
 
+        // Захватываем @MainActor-изолированные настройки до фоновой обработки
+        let (noiseStrength, shadowLift) = await MainActor.run {
+            (settings.noiseReductionStrength, settings.shadowLift)
+        }
+
         // 1. Отбираем только хорошие кадры (не смазанные, не со слишком большим движением)
         let goodFrames = frames.filter { $0.alignmentScore > 0.25 && $0.motionMagnitude < blurRejectionThreshold }
-        let stackFrames = goodFrames.isEmpty ? [frames[0]] : goodFrames
+        let framesToStack = goodFrames.isEmpty ? [frames[0]] : goodFrames
 
         // 2. Простой стекинг: среднее по всем хорошим кадрам (максимальный SNR)
-        guard let stacked = stackFrames(stackFrames) else { return frames[0].pixelBuffer }
+        guard let stacked = stackFrames(framesToStack) else { return frames[0].pixelBuffer }
 
         // 3. Агрессивное шумоподавление — несколько проходов CoreImage
-        guard let denoised = applyDenoising(to: stacked, strength: settings.noiseReductionStrength) else {
+        guard let denoised = applyDenoising(to: stacked, strength: noiseStrength) else {
             return stacked
         }
 
@@ -47,7 +52,7 @@ final class NightProcessor {
         //    - Более тёплый ББ (Night Sight слегка делает ночь теплее)
         //    - Подъём теней (делаем ночные снимки светлее)
         //    - Восстановление деталей через резкость
-        let final = applyNightColorScience(to: denoised, settings: settings)
+        let final = applyNightColorScience(to: denoised, shadowLift: shadowLift)
 
         return final ?? denoised
     }
@@ -175,22 +180,22 @@ final class NightProcessor {
 
     // MARK: - Ночная цветовая обработка
 
-    private func applyNightColorScience(to buffer: CVPixelBuffer, settings: CameraSettings) -> CVPixelBuffer? {
+    private func applyNightColorScience(to buffer: CVPixelBuffer, shadowLift: Float) -> CVPixelBuffer? {
         let image = CIImage(cvPixelBuffer: buffer)
 
         // Подъём экспозиции: ночные снимки должны выглядеть снятыми "как днём"
         // Night Sight Google поднимает яркость довольно агрессивно
         let exposureAdjusted = image
             .applyingFilter("CIExposureAdjust", parameters: [
-                "inputEV": CGFloat(settings.shadowLift * 8.0 + 0.3)
+                "inputEV": CGFloat(shadowLift * 8.0 + 0.3)
             ])
 
         // Тональная кривая ночи: сильно поднимаем тени, меньше трогаем света
         let toneCurve = exposureAdjusted
             .applyingFilter("CIToneCurve", parameters: [
                 "inputPoint0": CIVector(x: 0.0,  y: 0.0),
-                "inputPoint1": CIVector(x: 0.1,  y: CGFloat(0.1 + Double(settings.shadowLift) * 1.5)),
-                "inputPoint2": CIVector(x: 0.3,  y: CGFloat(0.35 + Double(settings.shadowLift))),
+                "inputPoint1": CIVector(x: 0.1,  y: CGFloat(0.1 + Double(shadowLift) * 1.5)),
+                "inputPoint2": CIVector(x: 0.3,  y: CGFloat(0.35 + Double(shadowLift))),
                 "inputPoint3": CIVector(x: 0.7,  y: 0.72),
                 "inputPoint4": CIVector(x: 1.0,  y: 1.0)
             ])

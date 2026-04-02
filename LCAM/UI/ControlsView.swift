@@ -326,25 +326,17 @@ struct ExposureSlider: View {
 
 struct LiquidGlassBackground: View {
     var body: some View {
-        Group {
-            if #available(iOS 26, *) {
+        Rectangle()
+            .fill(.ultraThinMaterial)
+            .overlay(
                 Rectangle()
-                    .fill(.regularMaterial)
-                    .glassEffect(.regular.tint(.black.opacity(0.3)), in: Rectangle())
-            } else {
-                Rectangle()
-                    .fill(.ultraThinMaterial)
-                    .overlay(
-                        Rectangle()
-                            .fill(
-                                LinearGradient(
-                                    colors: [.black.opacity(0.6), .black.opacity(0.3)],
-                                    startPoint: .bottom,
-                                    endPoint: .top
-                                )
-                            )
+                    .fill(
+                        LinearGradient(
+                            colors: [.black.opacity(0.6), .black.opacity(0.3)],
+                            startPoint: .bottom,
+                            endPoint: .top
+                        )
                     )
-            }
-        }
+            )
     }
 }

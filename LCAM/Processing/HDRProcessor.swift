@@ -149,6 +149,11 @@ final class HDRProcessor {
         to buffer: CVPixelBuffer,
         settings: CameraSettings
     ) async -> CVPixelBuffer? {
+        // Захватываем @MainActor-изолированные свойства до начала GPU-работы
+        let (shadowLift, highlightRecovery, saturationBoost, sharpeningStrength) = await MainActor.run {
+            (settings.shadowLift, settings.highlightRecovery, settings.saturationBoost, settings.sharpeningStrength)
+        }
+
         let ci = CIImage(cvPixelBuffer: buffer)
 
         // Шаг 1: Кривая тонального отображения (S-кривая)
@@ -156,23 +161,23 @@ final class HDRProcessor {
         let toneCurve = ci
             .applyingFilter("CIToneCurve", parameters: [
                 "inputPoint0": CIVector(x: 0.0,  y: 0.0),
-                "inputPoint1": CIVector(x: 0.15, y: CGFloat(0.15 + Double(settings.shadowLift))),
+                "inputPoint1": CIVector(x: 0.15, y: CGFloat(0.15 + Double(shadowLift))),
                 "inputPoint2": CIVector(x: 0.5,  y: 0.5),
-                "inputPoint3": CIVector(x: 0.85, y: CGFloat(0.85 - Double(settings.highlightRecovery) * 0.1)),
+                "inputPoint3": CIVector(x: 0.85, y: CGFloat(0.85 - Double(highlightRecovery) * 0.1)),
                 "inputPoint4": CIVector(x: 1.0,  y: 1.0)
             ])
 
         // Шаг 2: Цветовой баланс — небольшой буст насыщенности (как GCam)
         let saturated = toneCurve
             .applyingFilter("CIVibrance", parameters: [
-                "inputAmount": CGFloat(settings.saturationBoost * 2.5)
+                "inputAmount": CGFloat(saturationBoost * 2.5)
             ])
 
         // Шаг 3: Локальное улучшение контраста через нерезкое маскирование
         let sharpened = saturated
             .applyingFilter("CIUnsharpMask", parameters: [
                 "inputRadius":    2.5,
-                "inputIntensity": CGFloat(settings.sharpeningStrength * 0.9),
+                "inputIntensity": CGFloat(sharpeningStrength * 0.9),
                 "inputThreshold": 0.02
             ])
 

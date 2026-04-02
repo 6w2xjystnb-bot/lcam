@@ -196,7 +196,7 @@ struct LabeledSlider: View {
                 Spacer()
                 Text(String(format: format, value * scale))
                     .font(.system(size: 13, weight: .semibold, design: .rounded))
-                    .foregroundStyle(.accentColor)
+                    .foregroundStyle(Color.accentColor)
                     .frame(minWidth: 44, alignment: .trailing)
             }
             Slider(value: $value, in: range)

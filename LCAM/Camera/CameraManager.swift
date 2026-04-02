@@ -26,6 +26,9 @@ final class CameraManager: NSObject, ObservableObject {
     let photoOutput = AVCapturePhotoOutput()
     private let videoDataOutput = AVCaptureVideoDataOutput()
 
+    // Безопасное хранилище для делегата видеопотока (nonisolated-контекст)
+    nonisolated(unsafe) private var liveDevice: AVCaptureDevice?
+
     // MARK: - Внутренние очереди
     private let sessionQueue  = DispatchQueue(label: "lcam.session",  qos: .userInitiated)
     private let metaQueue     = DispatchQueue(label: "lcam.meta",     qos: .utility)
@@ -90,6 +93,7 @@ final class CameraManager: NSObject, ObservableObject {
         }
 
         configureDevice(device)
+        liveDevice = device
 
         do {
             let input = try AVCaptureDeviceInput(device: device)
@@ -144,18 +148,7 @@ final class CameraManager: NSObject, ObservableObject {
         guard let device = deviceInput?.device else { return }
         var stops: [CGFloat] = []
 
-        // Виртуальные составляющие камеры
-        if let constituent = device.virtualDeviceConstituentDevices {
-            for sub in constituent {
-                let factor = sub.videoZoomFactor(forCenterStageZoomFactor: 1.0)
-                _ = factor // просто проверяем доступность
-                // Вычисляем фактор из focalLength
-                let focal = sub.activeFormat.videoFieldOfView
-                _ = focal
-            }
-        }
-
-        // Фолбэк: стандартные стопы на основе min/max зума
+        // Стандартные стопы на основе min/max зума устройства
         let minZoom = device.minAvailableVideoZoomFactor
         let maxZoom = device.maxAvailableVideoZoomFactor
 
@@ -310,7 +303,7 @@ extension CameraManager: AVCaptureVideoDataOutputSampleBufferDelegate {
         didOutput sampleBuffer: CMSampleBuffer,
         from connection: AVCaptureConnection
     ) {
-        guard let device = deviceInput?.device else { return }
+        guard let device = liveDevice else { return }
 
         let iso        = device.iso
         let duration   = device.exposureDuration

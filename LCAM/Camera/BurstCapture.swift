@@ -9,7 +9,8 @@ final class BurstCapture: NSObject {
 
     private let photoOutput:  AVCapturePhotoOutput
     private let targetFrames: Int
-    private let settings:     CameraSettings
+    private let captureMode:  CaptureMode
+    private let flashMode:    AVCaptureDevice.FlashMode
 
     private var collectedBuffers: [Int: CVPixelBuffer] = [:] // порядковый → буфер
     private var collectedExif:    ExifMetadata?
@@ -21,10 +22,12 @@ final class BurstCapture: NSObject {
 
     private let captureQueue = DispatchQueue(label: "lcam.burst", qos: .userInitiated)
 
+    @MainActor
     init(photoOutput: AVCapturePhotoOutput, targetFrames: Int, settings: CameraSettings) {
         self.photoOutput  = photoOutput
         self.targetFrames = max(1, targetFrames)
-        self.settings     = settings
+        self.captureMode  = settings.captureMode
+        self.flashMode    = settings.flashMode
     }
 
     // Запуск: сначала делаем один тестовый кадр, потом остальные через небольшой интервал
@@ -62,7 +65,7 @@ final class BurstCapture: NSObject {
 
         // Небольшой интервал между кадрами: в ночном режиме — больше, чтобы AE устаканилось
         if fireCount < targetFrames {
-            let delay = settings.captureMode == .night ? 0.08 : 0.03
+            let delay = captureMode == .night ? 0.08 : 0.03
             captureQueue.asyncAfter(deadline: .now() + delay) { [weak self] in
                 self?.fireNextFrame()
             }
@@ -92,7 +95,7 @@ final class BurstCapture: NSObject {
         ps.photoQualityPrioritization    = .quality
 
         // Вспышка только для первого кадра (и только если включена)
-        ps.flashMode = (index == 0 && settings.flashMode == .on) ? .on : .off
+        ps.flashMode = (index == 0 && flashMode == .on) ? .on : .off
 
         return ps
     }
@@ -147,7 +150,7 @@ extension BurstCapture: AVCapturePhotoCaptureDelegate {
 
         // Заполняем EXIF из первого кадра
         if index == 0 {
-            collectedExif = ExifMetadata(from: photo, captureMode: settings.captureMode)
+            collectedExif = ExifMetadata(from: photo, captureMode: captureMode)
         }
 
         captureQueue.async { self.checkCompletion() }
