@@ -43,8 +43,11 @@ jobs:
           key: ${{ runner.os }}-dd-${{ hashFiles('**/*.swift', 'project.yml') }}
           restore-keys: ${{ runner.os }}-dd-
 
-      # Сборка для реального устройства (-sdk iphoneos, -derivedDataPath задаёт путь явно)
-      - name: Build for Device (arm64, unsigned)
+      # Сборка для реального устройства с ad-hoc подписью ("-")
+      # Ad-hoc: бинарник подписан codesign -s -, без Developer аккаунта.
+      # Это необходимо: без подписи Mach-O линкер не финализирует бинарь,
+      # что и вызывает "Bad file descriptor / (null)" при установке.
+      - name: Build for Device (arm64, ad-hoc signed)
         run: |
           xcodebuild build \
             -project LCAM.xcodeproj \
@@ -52,37 +55,47 @@ jobs:
             -configuration Release \
             -sdk iphoneos \
             -derivedDataPath "$RUNNER_TEMP/dd" \
-            CODE_SIGNING_ALLOWED=NO \
-            CODE_SIGNING_REQUIRED=NO \
-            CODE_SIGN_IDENTITY="" \
+            CODE_SIGN_IDENTITY="-" \
+            CODE_SIGNING_REQUIRED=YES \
+            CODE_SIGNING_ALLOWED=YES \
+            AD_HOC_CODE_SIGNING_ALLOWED=YES \
             PROVISIONING_PROFILE_SPECIFIER="" \
             | xcpretty --color --simple
 
-      # Пакуем .app из dd/Build/Products/Release-iphoneos/ → IPA
-      - name: Package unsigned IPA
+      # Проверяем .app и пакуем → IPA
+      - name: Package IPA
         run: |
           PRODUCTS="$RUNNER_TEMP/dd/Build/Products/Release-iphoneos"
-          echo "=== Contents of $PRODUCTS ==="
-          ls -la "$PRODUCTS" 2>/dev/null || echo "(empty or missing)"
-
           APP=$(find "$PRODUCTS" -maxdepth 1 -name "*.app" | head -1)
 
           if [ -z "$APP" ]; then
-            echo "=== Full DerivedData tree ==="
-            find "$RUNNER_TEMP/dd/Build/Products" -type d -name "*.app" 2>/dev/null || true
-            echo "ERROR: .app not found"
+            echo "ERROR: .app not found in $PRODUCTS"
+            find "$RUNNER_TEMP/dd/Build/Products" -type d -name "*.app" || true
             exit 1
           fi
 
-          echo "Packaging: $APP"
+          echo "=== .app: $APP ==="
+          ls -la "$APP"
+
+          # Проверяем что бинарник существует и это ARM64 Mach-O
+          EXEC=$(defaults read "$APP/Info.plist" CFBundleExecutable 2>/dev/null || echo "")
+          echo "CFBundleExecutable: '$EXEC'"
+          if [ -n "$EXEC" ] && [ -f "$APP/$EXEC" ]; then
+            file "$APP/$EXEC"
+          else
+            echo "WARNING: binary '$EXEC' not found — listing .app:"
+            find "$APP" -maxdepth 1 -type f
+          fi
+
+          # Упаковываем
           mkdir -p "$RUNNER_TEMP/ipa/Payload"
           cp -r "$APP" "$RUNNER_TEMP/ipa/Payload/"
-
           cd "$RUNNER_TEMP/ipa"
           zip -qr "$RUNNER_TEMP/LCAM.ipa" Payload/
 
-          echo "=== IPA ==="
+          echo "=== IPA ready ==="
           ls -lh "$RUNNER_TEMP/LCAM.ipa"
+          unzip -l "$RUNNER_TEMP/LCAM.ipa" | head -20
 
       - name: Upload IPA
         uses: actions/upload-artifact@v4
