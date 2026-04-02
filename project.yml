@@ -1,0 +1,131 @@
+# project.yml — конфигурация XcodeGen
+# Генерирует LCAM.xcodeproj из этого файла
+# Установка: brew install xcodegen && xcodegen generate
+
+name: LCAM
+
+options:
+  bundleIdPrefix: com.lcam
+  deploymentTarget:
+    iOS: "17.0"
+  xcodeVersion: "16.0"
+  createIntermediateGroups: true
+  generateEmptyDirectories: false
+  defaultConfig: Debug
+
+# Глобальные настройки
+settings:
+  base:
+    SWIFT_VERSION: "5.10"
+    ENABLE_BITCODE: NO
+    TARGETED_DEVICE_FAMILY: "1,2"        # iPhone + iPad
+    SUPPORTS_MACCATALYST: NO
+    SWIFT_STRICT_CONCURRENCY: complete   # полная проверка async/await
+    GCC_OPTIMIZATION_LEVEL: "0"
+  configs:
+    Debug:
+      DEBUG_INFORMATION_FORMAT: dwarf
+      SWIFT_OPTIMIZATION_LEVEL: "-Onone"
+      SWIFT_ACTIVE_COMPILATION_CONDITIONS: DEBUG
+    Release:
+      DEBUG_INFORMATION_FORMAT: dwarf-with-dsym
+      SWIFT_OPTIMIZATION_LEVEL: "-O"
+      VALIDATE_PRODUCT: YES
+
+targets:
+  LCAM:
+    type: application
+    platform: iOS
+    deploymentTarget: "17.0"
+
+    # Все Swift-файлы и ресурсы
+    sources:
+      - path: LCAM
+        excludes:
+          - "**/*.md"
+          - "**/.*"
+
+    # Info.plist
+    info:
+      path: LCAM/Resources/Info.plist
+
+    # Настройки сборки
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.lcam.app
+        INFOPLIST_FILE: LCAM/Resources/Info.plist
+        DEVELOPMENT_TEAM: ""                  # вставить Team ID при публикации
+        CODE_SIGN_STYLE: Automatic
+        CODE_SIGNING_ALLOWED: YES
+        ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
+        ALWAYS_EMBED_SWIFT_STANDARD_LIBRARIES: YES
+        MTL_ENABLE_DEBUG_INFO: INCLUDE_SOURCE  # Metal отладка в Debug
+        # Frameworks
+        OTHER_LDFLAGS:
+          - "-framework AVFoundation"
+          - "-framework CoreImage"
+          - "-framework Metal"
+          - "-framework MetalKit"
+          - "-framework MetalPerformanceShaders"
+          - "-framework Vision"
+          - "-framework Photos"
+          - "-framework CoreLocation"
+          - "-framework Accelerate"
+      configs:
+        Debug:
+          MTL_ENABLE_DEBUG_INFO: INCLUDE_SOURCE
+        Release:
+          MTL_ENABLE_DEBUG_INFO: NO
+          COPY_PHASE_STRIP: YES
+
+    # Системные фреймворки
+    dependencies:
+      - framework: AVFoundation.framework
+        weak: false
+      - framework: CoreImage.framework
+        weak: false
+      - framework: Metal.framework
+        weak: false
+      - framework: MetalKit.framework
+        weak: false
+      - framework: MetalPerformanceShaders.framework
+        weak: false
+      - framework: Vision.framework
+        weak: false
+      - framework: Photos.framework
+        weak: false
+      - framework: CoreLocation.framework
+        weak: false
+      - framework: Accelerate.framework
+        weak: false
+      - framework: CoreVideo.framework
+        weak: false
+      - framework: CoreMedia.framework
+        weak: false
+
+    # Фазы сборки
+    preBuildScripts:
+      - name: "SwiftLint (опционально)"
+        script: |
+          if which swiftlint >/dev/null; then
+            swiftlint --fix --quiet
+          fi
+        showEnvVarsInLog: false
+
+schemes:
+  LCAM:
+    build:
+      targets:
+        LCAM: all
+    run:
+      config: Debug
+      commandLineArguments:
+        "-com.apple.CoreData.SQLDebug": "0"
+    test:
+      config: Debug
+    profile:
+      config: Release
+    analyze:
+      config: Debug
+    archive:
+      config: Release

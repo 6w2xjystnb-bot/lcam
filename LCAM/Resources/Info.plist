@@ -1,0 +1,81 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>CFBundleDevelopmentRegion</key>
+	<string>ru</string>
+	<key>CFBundleDisplayName</key>
+	<string>LCAM</string>
+	<key>CFBundleExecutable</key>
+	<string>$(EXECUTABLE_NAME)</string>
+	<key>CFBundleIdentifier</key>
+	<string>$(PRODUCT_BUNDLE_IDENTIFIER)</string>
+	<key>CFBundleInfoDictionaryVersion</key>
+	<string>6.0</string>
+	<key>CFBundleName</key>
+	<string>$(PRODUCT_NAME)</string>
+	<key>CFBundlePackageType</key>
+	<string>APPL</string>
+	<key>CFBundleShortVersionString</key>
+	<string>1.0</string>
+	<key>CFBundleVersion</key>
+	<string>1</string>
+
+	<!-- Разрешения — обязательны для App Store -->
+	<key>NSCameraUsageDescription</key>
+	<string>LCAM использует камеру для съёмки фотографий с вычислительной обработкой HDR+.</string>
+	<key>NSMicrophoneUsageDescription</key>
+	<string>LCAM использует микрофон для записи звука при видеосъёмке.</string>
+	<key>NSPhotoLibraryAddUsageDescription</key>
+	<string>LCAM сохраняет обработанные фото в вашу библиотеку.</string>
+	<key>NSPhotoLibraryUsageDescription</key>
+	<string>LCAM читает фото для отображения в галерее.</string>
+	<key>NSLocationWhenInUseUsageDescription</key>
+	<string>LCAM может добавлять геолокацию к фотографиям (опционально).</string>
+
+	<!-- Поддерживаемые ориентации (только Portrait для камеры) -->
+	<key>UISupportedInterfaceOrientations</key>
+	<array>
+		<string>UIInterfaceOrientationPortrait</string>
+	</array>
+	<key>UISupportedInterfaceOrientations~ipad</key>
+	<array>
+		<string>UIInterfaceOrientationPortrait</string>
+		<string>UIInterfaceOrientationLandscapeLeft</string>
+		<string>UIInterfaceOrientationLandscapeRight</string>
+	</array>
+
+	<!-- Скрываем статус-бар -->
+	<key>UIStatusBarHidden</key>
+	<true/>
+	<key>UIViewControllerBasedStatusBarAppearance</key>
+	<false/>
+
+	<!-- Поддержка тёмной темы -->
+	<key>UIUserInterfaceStyle</key>
+	<string>Dark</string>
+
+	<!-- Требуется камера -->
+	<key>UIRequiredDeviceCapabilities</key>
+	<array>
+		<string>camera-flash</string>
+		<string>auto-focus-camera</string>
+		<string>still-camera</string>
+	</array>
+
+	<!-- Минимальная версия iOS -->
+	<key>MinimumOSVersion</key>
+	<string>17.0</string>
+
+	<!-- LaunchScreen -->
+	<key>UILaunchScreen</key>
+	<dict>
+		<key>UIColorName</key>
+		<string>Black</string>
+	</dict>
+
+	<!-- Поддержка Dynamic Island / ProMotion -->
+	<key>CADisableMinimumFrameDurationOnPhone</key>
+	<true/>
+</dict>
+</plist>

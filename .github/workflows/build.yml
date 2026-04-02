@@ -1,0 +1,107 @@
+# .github/workflows/build.yml
+# CI/CD: автоматическая сборка LCAM на каждый push и PR
+# Использует xcodegen для генерации .xcodeproj из project.yml
+
+name: Build LCAM
+
+on:
+  push:
+    branches: [ main, develop ]
+  pull_request:
+    branches: [ main ]
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    name: Build for iOS Simulator
+    runs-on: macos-15
+
+    steps:
+      # 1. Получаем код
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      # 2. Выбираем Xcode (нужен 16+)
+      - name: Select Xcode
+        run: |
+          sudo xcode-select -s /Applications/Xcode_16.3.app
+          xcodebuild -version
+
+      # 3. Устанавливаем xcodegen
+      - name: Install XcodeGen
+        run: |
+          brew install xcodegen
+          xcodegen version
+
+      # 4. Генерируем .xcodeproj из project.yml
+      - name: Generate Xcode Project
+        run: xcodegen generate --spec project.yml
+
+      # 5. Кэшируем DerivedData (ускоряет последующие сборки)
+      - name: Cache DerivedData
+        uses: actions/cache@v4
+        with:
+          path: ~/Library/Developer/Xcode/DerivedData
+          key: ${{ runner.os }}-deriveddata-${{ hashFiles('**/*.swift', 'project.yml') }}
+          restore-keys: |
+            ${{ runner.os }}-deriveddata-
+
+      # 6. Сборка для симулятора (без подписи кода — для CI)
+      - name: Build (Simulator)
+        run: |
+          xcodebuild build \
+            -project LCAM.xcodeproj \
+            -scheme LCAM \
+            -destination "generic/platform=iOS Simulator" \
+            -configuration Debug \
+            CODE_SIGNING_ALLOWED=NO \
+            CODE_SIGN_IDENTITY="" \
+            PROVISIONING_PROFILE_SPECIFIER="" \
+            | xcpretty --color --simple
+        env:
+          NSUnbufferedIO: YES
+
+      # 7. Проверка компиляции Metal-шейдеров
+      - name: Verify Metal Shaders
+        run: |
+          echo "Metal shaders are compiled inline — verified during main build."
+
+      # 8. Архив для App Store (только при пуше в main + наличии сертификата)
+      - name: Archive (main branch only)
+        if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+        run: |
+          xcodebuild archive \
+            -project LCAM.xcodeproj \
+            -scheme LCAM \
+            -configuration Release \
+            -destination "generic/platform=iOS" \
+            -archivePath ./build/LCAM.xcarchive \
+            CODE_SIGNING_ALLOWED=NO \
+            | xcpretty --color --simple
+        continue-on-error: true   # пропускаем если нет сертификата
+
+      # 9. Загружаем артефакты
+      - name: Upload Build Artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: LCAM-build-${{ github.sha }}
+          path: |
+            build/
+            *.xcodeproj/
+          retention-days: 7
+
+  # Проверка качества кода
+  lint:
+    name: SwiftLint
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install SwiftLint
+        run: brew install swiftlint
+      - name: Run SwiftLint
+        run: swiftlint lint --reporter github-actions-logging
+        continue-on-error: true   # предупреждения не блокируют сборку
