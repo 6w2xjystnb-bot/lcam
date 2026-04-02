@@ -13,15 +13,13 @@ options:
   generateEmptyDirectories: false
   defaultConfig: Debug
 
-# Глобальные настройки
 settings:
   base:
     SWIFT_VERSION: "5.10"
     ENABLE_BITCODE: NO
-    TARGETED_DEVICE_FAMILY: "1,2"        # iPhone + iPad
+    TARGETED_DEVICE_FAMILY: "1,2"
     SUPPORTS_MACCATALYST: NO
-    SWIFT_STRICT_CONCURRENCY: complete   # полная проверка async/await
-    GCC_OPTIMIZATION_LEVEL: "0"
+    SWIFT_STRICT_CONCURRENCY: complete
   configs:
     Debug:
       DEBUG_INFORMATION_FORMAT: dwarf
@@ -38,74 +36,51 @@ targets:
     platform: iOS
     deploymentTarget: "17.0"
 
-    # Все Swift-файлы и ресурсы
     sources:
       - path: LCAM
         excludes:
           - "**/*.md"
           - "**/.*"
 
-    # Info.plist
     info:
       path: LCAM/Resources/Info.plist
 
-    # Настройки сборки
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.lcam.app
+        PRODUCT_NAME: LCAM
         INFOPLIST_FILE: LCAM/Resources/Info.plist
-        DEVELOPMENT_TEAM: ""                  # вставить Team ID при публикации
+        DEVELOPMENT_TEAM: ""
         CODE_SIGN_STYLE: Automatic
         CODE_SIGNING_ALLOWED: YES
         ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
         ALWAYS_EMBED_SWIFT_STANDARD_LIBRARIES: YES
-        MTL_ENABLE_DEBUG_INFO: INCLUDE_SOURCE  # Metal отладка в Debug
-        # Frameworks
-        OTHER_LDFLAGS:
-          - "-framework AVFoundation"
-          - "-framework CoreImage"
-          - "-framework Metal"
-          - "-framework MetalKit"
-          - "-framework MetalPerformanceShaders"
-          - "-framework Vision"
-          - "-framework Photos"
-          - "-framework CoreLocation"
-          - "-framework Accelerate"
+        # Системные фреймворки — auto-linked через Swift import, без embed
+        FRAMEWORK_SEARCH_PATHS: "$(inherited)"
       configs:
         Debug:
           MTL_ENABLE_DEBUG_INFO: INCLUDE_SOURCE
         Release:
           MTL_ENABLE_DEBUG_INFO: NO
-          COPY_PHASE_STRIP: YES
+          COPY_PHASE_STRIP: NO      # не стрипать при отсутствии подписи
 
-    # Системные фреймворки
+    # Системные SDK-фреймворки — ключевое: sdk: вместо framework:
+    # framework: ищет локальный файл → падает; sdk: берёт из Xcode SDK
     dependencies:
-      - framework: AVFoundation.framework
-        weak: false
-      - framework: CoreImage.framework
-        weak: false
-      - framework: Metal.framework
-        weak: false
-      - framework: MetalKit.framework
-        weak: false
-      - framework: MetalPerformanceShaders.framework
-        weak: false
-      - framework: Vision.framework
-        weak: false
-      - framework: Photos.framework
-        weak: false
-      - framework: CoreLocation.framework
-        weak: false
-      - framework: Accelerate.framework
-        weak: false
-      - framework: CoreVideo.framework
-        weak: false
-      - framework: CoreMedia.framework
-        weak: false
+      - sdk: AVFoundation.framework
+      - sdk: CoreImage.framework
+      - sdk: Metal.framework
+      - sdk: MetalKit.framework
+      - sdk: MetalPerformanceShaders.framework
+      - sdk: Vision.framework
+      - sdk: Photos.framework
+      - sdk: CoreLocation.framework
+      - sdk: Accelerate.framework
+      - sdk: CoreVideo.framework
+      - sdk: CoreMedia.framework
 
-    # Фазы сборки
     preBuildScripts:
-      - name: "SwiftLint (опционально)"
+      - name: "SwiftLint"
         script: |
           if which swiftlint >/dev/null; then
             swiftlint --fix --quiet
@@ -119,8 +94,6 @@ schemes:
         LCAM: all
     run:
       config: Debug
-      commandLineArguments:
-        "-com.apple.CoreData.SQLDebug": "0"
     test:
       config: Debug
     profile:

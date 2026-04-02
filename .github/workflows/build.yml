@@ -49,6 +49,7 @@ jobs:
       # что и вызывает "Bad file descriptor / (null)" при установке.
       - name: Build for Device (arm64, ad-hoc signed)
         run: |
+          set -o pipefail   # xcodebuild ошибки не глотаются xcpretty
           xcodebuild build \
             -project LCAM.xcodeproj \
             -scheme LCAM \
