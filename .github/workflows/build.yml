@@ -17,6 +17,8 @@ jobs:
   build:
     name: Build & Package IPA
     runs-on: macos-15
+    permissions:
+      contents: write   # нужно для создания GitHub Releases
 
     steps:
       - name: Checkout
