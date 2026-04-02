@@ -1,5 +1,5 @@
 # .github/workflows/build.yml
-# CI/CD: сборка LCAM + unsigned IPA
+# CI/CD: сборка LCAM + ad-hoc IPA
 
 name: Build LCAM
 
@@ -18,7 +18,7 @@ jobs:
     name: Build & Package IPA
     runs-on: macos-15
     permissions:
-      contents: write   # нужно для создания GitHub Releases
+      contents: write
 
     steps:
       - name: Checkout
@@ -28,7 +28,6 @@ jobs:
         run: |
           sudo xcode-select -s /Applications/Xcode_16.3.app
           xcodebuild -version
-          xcodebuild -showsdks | grep -i ios
 
       - name: Install XcodeGen
         run: brew install xcodegen && xcodegen version
@@ -36,22 +35,15 @@ jobs:
       - name: Generate Xcode Project
         run: xcodegen generate --spec project.yml
 
-      - name: Cache DerivedData
-        uses: actions/cache@v4
-        with:
-          path: ${{ runner.temp }}/dd
-          key: ${{ runner.os }}-dd-${{ hashFiles('**/*.swift', 'project.yml') }}
-          restore-keys: ${{ runner.os }}-dd-
+      # Кеш DerivedData ОТКЛЮЧЁН намеренно:
+      # стухший llbuild-граф из старых signed-билдов вызывал
+      # "Build input file cannot be found: LCAM.app/LCAM" (exit 65).
+      # clean build гарантирует чистый граф зависимостей.
 
-      # Сборка для реального устройства с ad-hoc подписью ("-")
-      # Ad-hoc: бинарник подписан codesign -s -, без Developer аккаунта.
-      # Это необходимо: без подписи Mach-O линкер не финализирует бинарь,
-      # что и вызывает "Bad file descriptor / (null)" при установке.
-      # Строим без подписи — подписывать будем сами после сборки
-      - name: Build for Device (arm64, unsigned)
+      - name: Build for Device (arm64, no signing)
         run: |
           set -o pipefail
-          xcodebuild build \
+          xcodebuild clean build \
             -project LCAM.xcodeproj \
             -scheme LCAM \
             -configuration Release \
@@ -63,39 +55,49 @@ jobs:
             PROVISIONING_PROFILE_SPECIFIER="" \
             | xcpretty --color --simple
 
-      - name: Package IPA (ad-hoc sign + zip)
+      - name: Ad-hoc sign + Package IPA
         run: |
           PRODUCTS="$RUNNER_TEMP/dd/Build/Products/Release-iphoneos"
           APP=$(find "$PRODUCTS" -maxdepth 1 -name "*.app" | head -1)
 
           if [ -z "$APP" ]; then
-            echo "ERROR: .app not found"; ls "$PRODUCTS" || true; exit 1
+            echo "ERROR: .app not found in $PRODUCTS"
+            find "$RUNNER_TEMP/dd" -name "*.app" 2>/dev/null || true
+            exit 1
           fi
 
-          # Проверяем бинарник
-          EXEC=$(defaults read "$APP/Info.plist" CFBundleExecutable 2>/dev/null)
-          echo "App: $APP  |  Binary: $EXEC"
-          ls -lh "$APP/$EXEC" 2>/dev/null && file "$APP/$EXEC" || \
-            { echo "ERROR: binary missing"; find "$APP" -maxdepth 1; exit 1; }
+          EXEC=$(defaults read "$APP/Info.plist" CFBundleExecutable 2>/dev/null || echo "LCAM")
+          echo "=== App: $APP | Binary: $EXEC ==="
+          ls -lah "$APP"
 
-          # Ad-hoc подпись применяем ВРУЧНУЮ к готовому бинарнику
-          # (без -s - в xcodebuild, чтобы избежать input/output dependency)
-          codesign -f -s - --generate-entitlement-der "$APP" 2>/dev/null || \
+          if [ ! -f "$APP/$EXEC" ]; then
+            echo "ERROR: binary $EXEC not found inside .app"
+            exit 1
+          fi
+
+          file "$APP/$EXEC"
+
+          # Ad-hoc подпись вручную (codesign -s -)
+          # Нужна для AltStore/Sideloadly — они перепишут её своей при установке
+          codesign -f -s - "$APP/$EXEC"
           codesign -f -s - "$APP"
-          echo "Signed: $(codesign -d "$APP" 2>&1 | head -2)"
+          echo "=== Signature ==="
+          codesign -dvvv "$APP" 2>&1 | head -5
 
-          # Пакуем
+          # Пакуем IPA
           mkdir -p "$RUNNER_TEMP/ipa/Payload"
           cp -r "$APP" "$RUNNER_TEMP/ipa/Payload/"
           cd "$RUNNER_TEMP/ipa"
           zip -qr "$RUNNER_TEMP/LCAM.ipa" Payload/
+
+          echo "=== IPA contents ==="
           ls -lh "$RUNNER_TEMP/LCAM.ipa"
-          unzip -l "$RUNNER_TEMP/LCAM.ipa" | grep -v "/$" | head -10
+          unzip -l "$RUNNER_TEMP/LCAM.ipa" | grep -v "/$" | head -15
 
       - name: Upload IPA
         uses: actions/upload-artifact@v4
         with:
-          name: LCAM-unsigned-${{ github.sha }}
+          name: LCAM-adhoc-${{ github.sha }}
           path: ${{ runner.temp }}/LCAM.ipa
           retention-days: 30
 
@@ -108,18 +110,15 @@ jobs:
           gh release create "$TAG" \
             "$RUNNER_TEMP/LCAM.ipa#LCAM.ipa" \
             --repo "$GITHUB_REPOSITORY" \
-            --title "LCAM $TAG (unsigned IPA)" \
-            --notes "## LCAM — Computational Camera for iPhone
+            --title "LCAM $TAG" \
+            --notes "## LCAM — Computational Camera
 
-          **Установка:** AltStore / Sideloadly / TrollStore
-          **Требования:** iOS 17+, iPhone с Metal (iPhone 6s+)
+          **Установка:** AltStore / Sideloadly (IPA с ad-hoc подписью)
+          **Требования:** iOS 17+, iPhone с Metal
 
-          ### Что внутри
-          - HDR+ (бёрст → Vision optical flow → Metal merge)
-          - Night mode (стекинг 30 кадров + CoreImage denoising)
-          - Liquid Glass UI (iOS 26)
-
-          > Unsigned IPA — при установке через AltStore/Sideloadly потребуется Apple ID."
+          - HDR+ multi-frame (Vision optical flow + Metal noise-weighted merge)
+          - Night mode (30-frame stacking + CoreImage denoising)
+          - Liquid Glass UI (iOS 26)"
 
   lint:
     name: SwiftLint
