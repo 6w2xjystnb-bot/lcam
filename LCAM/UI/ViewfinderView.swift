@@ -44,6 +44,14 @@ final class PreviewUIView: UIView {
     override func layoutSubviews() {
         super.layoutSubviews()
         previewLayer.frame = bounds
+
+        // iOS 17+: выставляем портретный угол поворота для превью
+        // Без этого слой может оставаться чёрным (нет дефолтного ориентирования)
+        if let connection = previewLayer.connection {
+            if connection.isVideoRotationAngleSupported(90) {
+                connection.videoRotationAngle = 90
+            }
+        }
     }
 
     @objc private func handleTap(_ gr: UITapGestureRecognizer) {

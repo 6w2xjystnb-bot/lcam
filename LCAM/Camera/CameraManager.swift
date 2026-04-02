@@ -53,29 +53,31 @@ final class CameraManager: NSObject, ObservableObject {
 
     // MARK: - Настройка сессии
     func configure() {
-        sessionQueue.async { [weak self] in
-            guard let self else { return }
-            self.session.beginConfiguration()
-            self.session.sessionPreset = .photo
-
-            self.addCameraInput(position: .back)
-            self.addPhotoOutput()
-            self.addVideoDataOutput()
-
-            self.session.commitConfiguration()
-
-            // Строим превью-слой на главном потоке
-            Task { @MainActor in
-                let layer = AVCaptureVideoPreviewLayer(session: self.session)
-                layer.videoGravity = .resizeAspectFill
-                self.previewLayer = layer
+        // Сначала запрашиваем разрешение — без него сессия стартует "вхолостую"
+        // и prevIEW остаётся чёрным (даже если OS показывает зелёную точку)
+        AVCaptureDevice.requestAccess(for: .video) { [weak self] granted in
+            guard granted, let self else { return }
+            self.sessionQueue.async { [weak self] in
+                guard let self else { return }
+                self.configureAndStart()
             }
+        }
+    }
 
-            self.session.startRunning()
-            Task { @MainActor in
-                self.isSessionRunning = self.session.isRunning
-                self.detectZoomStops()
-            }
+    private func configureAndStart() {
+        session.beginConfiguration()
+        session.sessionPreset = .photo
+
+        addCameraInput(position: .back)
+        addPhotoOutput()
+        addVideoDataOutput()
+
+        session.commitConfiguration()
+        session.startRunning()
+
+        Task { @MainActor in
+            self.isSessionRunning = self.session.isRunning
+            self.detectZoomStops()
         }
     }
 
