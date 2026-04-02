@@ -1,5 +1,5 @@
 # .github/workflows/build.yml
-# CI/CD: сборка LCAM + генерация unsigned IPA для сайдлоадинга (AltStore / Sideloadly)
+# CI/CD: сборка LCAM + unsigned IPA для AltStore / Sideloadly
 
 name: Build LCAM
 
@@ -19,25 +19,22 @@ jobs:
     runs-on: macos-15
 
     steps:
-      # 1. Код
       - name: Checkout
         uses: actions/checkout@v4
 
-      # 2. Xcode 16
       - name: Select Xcode
         run: |
           sudo xcode-select -s /Applications/Xcode_16.3.app
           xcodebuild -version
+          # Показываем доступные SDK
+          xcodebuild -showsdks | grep -i ios
 
-      # 3. XcodeGen
       - name: Install XcodeGen
         run: brew install xcodegen && xcodegen version
 
-      # 4. Генерируем .xcodeproj
       - name: Generate Xcode Project
         run: xcodegen generate --spec project.yml
 
-      # 5. Кэш DerivedData
       - name: Cache DerivedData
         uses: actions/cache@v4
         with:
@@ -45,7 +42,7 @@ jobs:
           key: ${{ runner.os }}-dd-${{ hashFiles('**/*.swift', 'project.yml') }}
           restore-keys: ${{ runner.os }}-dd-
 
-      # 6. Сборка для симулятора — проверка компиляции
+      # Сборка для симулятора — проверка компиляции всего кода
       - name: Build (Simulator — compile check)
         run: |
           xcodebuild build \
@@ -55,83 +52,88 @@ jobs:
             -configuration Release \
             CODE_SIGNING_ALLOWED=NO \
             CODE_SIGN_IDENTITY="" \
-            PROVISIONING_PROFILE_SPECIFIER="" \
             | xcpretty --color --simple
-        env:
-          NSUnbufferedIO: YES
 
-      # 7. Архив для реального устройства (без подписи)
-      - name: Archive for Device (unsigned)
+      # Сборка для реального устройства через -sdk iphoneos
+      # (не требует отдельно установленной platform, SDK уже в Xcode)
+      - name: Build for Device (arm64, unsigned)
         run: |
-          xcodebuild archive \
+          xcodebuild build \
             -project LCAM.xcodeproj \
             -scheme LCAM \
             -configuration Release \
-            -destination "generic/platform=iOS" \
-            -archivePath "$RUNNER_TEMP/LCAM.xcarchive" \
+            -sdk iphoneos \
             CODE_SIGNING_ALLOWED=NO \
             CODE_SIGNING_REQUIRED=NO \
             CODE_SIGN_IDENTITY="" \
-            AD_HOC_CODE_SIGNING_ALLOWED=YES \
+            PROVISIONING_PROFILE_SPECIFIER="" \
+            BUILD_DIR="$RUNNER_TEMP/build" \
             | xcpretty --color --simple
 
-      # 8. Пакуем .app → Payload/ → LCAM.ipa
-      # Unsigned IPA: устанавливается через AltStore, Sideloadly, TrollStore
+      # Пакуем .app из Release-iphoneos/ → Payload/ → LCAM.ipa
       - name: Package unsigned IPA
         run: |
-          ARCHIVE="$RUNNER_TEMP/LCAM.xcarchive"
-          APP=$(find "$ARCHIVE/Products/Applications" -name "*.app" | head -1)
+          BUILD_DIR="$RUNNER_TEMP/build/Release-iphoneos"
+          APP=$(find "$BUILD_DIR" -maxdepth 1 -name "*.app" | head -1)
 
+          if [ -z "$APP" ]; then
+            echo "=== Build dir contents ==="
+            find "$RUNNER_TEMP/build" -type d -name "*.app" || true
+            echo "ERROR: .app not found in $BUILD_DIR"
+            exit 1
+          fi
+
+          echo "Packaging: $APP"
           mkdir -p "$RUNNER_TEMP/ipa/Payload"
           cp -r "$APP" "$RUNNER_TEMP/ipa/Payload/"
 
           cd "$RUNNER_TEMP/ipa"
-          zip -qr "$RUNNER_TEMP/LCAM.ipa" Payload
+          zip -qr "$RUNNER_TEMP/LCAM.ipa" Payload/
 
-          # Выводим размер
+          echo "=== IPA size ==="
           ls -lh "$RUNNER_TEMP/LCAM.ipa"
           echo "IPA_PATH=$RUNNER_TEMP/LCAM.ipa" >> $GITHUB_ENV
 
-      # 9. Загружаем IPA как артефакт (скачать → Releases)
-      - name: Upload IPA artifact
+      # Загружаем IPA как артефакт (30 дней)
+      - name: Upload IPA
         uses: actions/upload-artifact@v4
         with:
           name: LCAM-unsigned-${{ github.sha }}
           path: ${{ runner.temp }}/LCAM.ipa
           retention-days: 30
 
-      # 10. Создаём GitHub Release с IPA при пуше в main
-      - name: Create Release
+      # GitHub Release с IPA при каждом пуше в main
+      - name: Create GitHub Release
         if: github.ref == 'refs/heads/main' && github.event_name == 'push'
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          TAG="build-$(date +'%Y%m%d-%H%M')"
+          TAG="v1.0-build-$(date +'%Y%m%d-%H%M')"
           gh release create "$TAG" \
-            "$RUNNER_TEMP/LCAM.ipa" \
+            "$RUNNER_TEMP/LCAM.ipa#LCAM.ipa" \
             --repo "$GITHUB_REPOSITORY" \
-            --title "LCAM $TAG (unsigned)" \
-            --notes "## LCAM — Unsigned IPA
+            --title "LCAM $TAG (unsigned IPA)" \
+            --notes "## LCAM — Computational Camera for iPhone
 
           ### Установка
-          1. **AltStore** — через AltServer на Mac/Windows
-          2. **Sideloadly** — [sideloadly.io](https://sideloadly.io)
-          3. **TrollStore** — если устройство совместимо
-
-          ### Что внутри
-          - HDR+ многокадровая обработка (бёрст 4–30 кадров)
-          - Ночной режим (стекинг + CoreImage denoising)
-          - Liquid Glass UI (iOS 26)
-          - Vision optical flow выравнивание
-          - Metal GPU merge с моделью шума
+          | Метод | Описание |
+          |-------|----------|
+          | **AltStore** | Установить через AltServer (Mac/Win). Работает 7 дней бесплатно. |
+          | **Sideloadly** | [sideloadly.io](https://sideloadly.io) — GUI-инструмент |
+          | **TrollStore** | Если устройство совместимо (iOS 14–16.x) |
 
           ### Требования
-          iOS 17.0+, iPhone с поддержкой Metal
+          - iPhone с поддержкой Metal (iPhone 6s+)
+          - iOS 17.0+
 
-          > ⚠️ Unsigned IPA — Apple ID понадобится при установке через AltStore/Sideloadly.
-          > Приложение будет работать 7 дней (бесплатный аккаунт) или постоянно (Developer аккаунт)."
+          ### Что внутри
+          - **HDR+** — бёрст 4–30 кадров → Vision optical flow выравнивание → Metal noise-weighted merge
+          - **Night mode** — стекинг 30 кадров → CINoiseReduction → подъём теней
+          - **Liquid Glass UI** (iOS 26) с фолбэком на iOS 17
+          - Тональное отображение, цветовая матрица, Vibrance — как в GCam
 
-  # SwiftLint
+          > ⚠️ Unsigned IPA — при установке через AltStore/Sideloadly потребуется Apple ID."
+
   lint:
     name: SwiftLint
     runs-on: macos-15
