@@ -33,7 +33,14 @@ jobs:
         run: brew install xcodegen && xcodegen version
 
       - name: Generate Xcode Project
-        run: xcodegen generate --spec project.yml
+        run: |
+          xcodegen generate --spec project.yml
+          echo "=== Swift files on disk ==="
+          find LCAM -name "*.swift" | sort
+          echo "=== Swift files in pbxproj ==="
+          grep -c "\.swift" LCAM.xcodeproj/project.pbxproj || echo "ZERO — XcodeGen did not include sources!"
+          echo "=== Compile Sources phase ==="
+          grep -A 40 "PBXSourcesBuildPhase" LCAM.xcodeproj/project.pbxproj | head -45
 
       # Кеш DerivedData ОТКЛЮЧЁН намеренно:
       # стухший llbuild-граф из старых signed-билдов вызывал

@@ -37,10 +37,11 @@ targets:
     deploymentTarget: "17.0"
 
     sources:
-      - path: LCAM
-        excludes:
-          - "**/*.md"
-          - "**/.*"
+      - path: LCAM/App
+      - path: LCAM/Camera
+      - path: LCAM/Models
+      - path: LCAM/Processing
+      - path: LCAM/UI
 
     info:
       path: LCAM/Resources/Info.plist
