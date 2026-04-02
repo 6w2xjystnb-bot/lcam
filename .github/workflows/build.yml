@@ -1,5 +1,5 @@
 # .github/workflows/build.yml
-# CI/CD: сборка LCAM + unsigned IPA для AltStore / Sideloadly
+# CI/CD: сборка LCAM + unsigned IPA
 
 name: Build LCAM
 
@@ -26,7 +26,6 @@ jobs:
         run: |
           sudo xcode-select -s /Applications/Xcode_16.3.app
           xcodebuild -version
-          # Показываем доступные SDK
           xcodebuild -showsdks | grep -i ios
 
       - name: Install XcodeGen
@@ -38,24 +37,11 @@ jobs:
       - name: Cache DerivedData
         uses: actions/cache@v4
         with:
-          path: ~/Library/Developer/Xcode/DerivedData
+          path: ${{ runner.temp }}/dd
           key: ${{ runner.os }}-dd-${{ hashFiles('**/*.swift', 'project.yml') }}
           restore-keys: ${{ runner.os }}-dd-
 
-      # Сборка для симулятора — проверка компиляции всего кода
-      - name: Build (Simulator — compile check)
-        run: |
-          xcodebuild build \
-            -project LCAM.xcodeproj \
-            -scheme LCAM \
-            -destination "generic/platform=iOS Simulator" \
-            -configuration Release \
-            CODE_SIGNING_ALLOWED=NO \
-            CODE_SIGN_IDENTITY="" \
-            | xcpretty --color --simple
-
-      # Сборка для реального устройства через -sdk iphoneos
-      # (не требует отдельно установленной platform, SDK уже в Xcode)
+      # Сборка для реального устройства (-sdk iphoneos, -derivedDataPath задаёт путь явно)
       - name: Build for Device (arm64, unsigned)
         run: |
           xcodebuild build \
@@ -63,23 +49,26 @@ jobs:
             -scheme LCAM \
             -configuration Release \
             -sdk iphoneos \
+            -derivedDataPath "$RUNNER_TEMP/dd" \
             CODE_SIGNING_ALLOWED=NO \
             CODE_SIGNING_REQUIRED=NO \
             CODE_SIGN_IDENTITY="" \
             PROVISIONING_PROFILE_SPECIFIER="" \
-            BUILD_DIR="$RUNNER_TEMP/build" \
             | xcpretty --color --simple
 
-      # Пакуем .app из Release-iphoneos/ → Payload/ → LCAM.ipa
+      # Пакуем .app из dd/Build/Products/Release-iphoneos/ → IPA
       - name: Package unsigned IPA
         run: |
-          BUILD_DIR="$RUNNER_TEMP/build/Release-iphoneos"
-          APP=$(find "$BUILD_DIR" -maxdepth 1 -name "*.app" | head -1)
+          PRODUCTS="$RUNNER_TEMP/dd/Build/Products/Release-iphoneos"
+          echo "=== Contents of $PRODUCTS ==="
+          ls -la "$PRODUCTS" 2>/dev/null || echo "(empty or missing)"
+
+          APP=$(find "$PRODUCTS" -maxdepth 1 -name "*.app" | head -1)
 
           if [ -z "$APP" ]; then
-            echo "=== Build dir contents ==="
-            find "$RUNNER_TEMP/build" -type d -name "*.app" || true
-            echo "ERROR: .app not found in $BUILD_DIR"
+            echo "=== Full DerivedData tree ==="
+            find "$RUNNER_TEMP/dd/Build/Products" -type d -name "*.app" 2>/dev/null || true
+            echo "ERROR: .app not found"
             exit 1
           fi
 
@@ -90,11 +79,9 @@ jobs:
           cd "$RUNNER_TEMP/ipa"
           zip -qr "$RUNNER_TEMP/LCAM.ipa" Payload/
 
-          echo "=== IPA size ==="
+          echo "=== IPA ==="
           ls -lh "$RUNNER_TEMP/LCAM.ipa"
-          echo "IPA_PATH=$RUNNER_TEMP/LCAM.ipa" >> $GITHUB_ENV
 
-      # Загружаем IPA как артефакт (30 дней)
       - name: Upload IPA
         uses: actions/upload-artifact@v4
         with:
@@ -102,7 +89,6 @@ jobs:
           path: ${{ runner.temp }}/LCAM.ipa
           retention-days: 30
 
-      # GitHub Release с IPA при каждом пуше в main
       - name: Create GitHub Release
         if: github.ref == 'refs/heads/main' && github.event_name == 'push'
         env:
@@ -115,24 +101,15 @@ jobs:
             --title "LCAM $TAG (unsigned IPA)" \
             --notes "## LCAM — Computational Camera for iPhone
 
-          ### Установка
-          | Метод | Описание |
-          |-------|----------|
-          | **AltStore** | Установить через AltServer (Mac/Win). Работает 7 дней бесплатно. |
-          | **Sideloadly** | [sideloadly.io](https://sideloadly.io) — GUI-инструмент |
-          | **TrollStore** | Если устройство совместимо (iOS 14–16.x) |
-
-          ### Требования
-          - iPhone с поддержкой Metal (iPhone 6s+)
-          - iOS 17.0+
+          **Установка:** AltStore / Sideloadly / TrollStore
+          **Требования:** iOS 17+, iPhone с Metal (iPhone 6s+)
 
           ### Что внутри
-          - **HDR+** — бёрст 4–30 кадров → Vision optical flow выравнивание → Metal noise-weighted merge
-          - **Night mode** — стекинг 30 кадров → CINoiseReduction → подъём теней
-          - **Liquid Glass UI** (iOS 26) с фолбэком на iOS 17
-          - Тональное отображение, цветовая матрица, Vibrance — как в GCam
+          - HDR+ (бёрст → Vision optical flow → Metal merge)
+          - Night mode (стекинг 30 кадров + CoreImage denoising)
+          - Liquid Glass UI (iOS 26)
 
-          > ⚠️ Unsigned IPA — при установке через AltStore/Sideloadly потребуется Apple ID."
+          > Unsigned IPA — при установке через AltStore/Sideloadly потребуется Apple ID."
 
   lint:
     name: SwiftLint
