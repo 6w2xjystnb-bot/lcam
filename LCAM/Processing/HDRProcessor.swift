@@ -180,23 +180,12 @@ final class HDRProcessor {
                 "inputIntensity": CGFloat(sharpeningStrength * 0.9)
             ])
 
-        // Шаг 4: Небольшая цветовая матрица для "GCam-look"
-        // Слегка усиливаем синий и зелёный (более холодные, яркие тона)
-        let colorMatrix = sharpened
-            .applyingFilter("CIColorMatrix", parameters: [
-                "inputRVector": CIVector(x: 1.02, y: 0.00, z: -0.01, w: 0),
-                "inputGVector": CIVector(x: 0.00, y: 1.03, z:  0.00, w: 0),
-                "inputBVector": CIVector(x: -0.01, y: 0.01, z: 1.01, w: 0),
-                "inputAVector": CIVector(x: 0, y: 0, z: 0, w: 1),
-                "inputBiasVector": CIVector(x: 0, y: 0, z: 0, w: 0)
-            ])
-
         // Финальный рендер в новый CVPixelBuffer
         let w = CVPixelBufferGetWidth(buffer)
         let h = CVPixelBufferGetHeight(buffer)
         guard let result = createPixelBuffer(width: w, height: h) else { return buffer }
 
-        ciContext.render(colorMatrix, to: result)
+        ciContext.render(sharpened, to: result)
         return result
     }
 

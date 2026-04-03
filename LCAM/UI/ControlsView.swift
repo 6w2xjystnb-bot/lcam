@@ -87,7 +87,8 @@ struct ControlsView: View {
             // --- Кнопки зума ---
             ZoomStrip(
                 available: camera.availableZoomStops,
-                current:   camera.zoomFactor
+                current:   camera.zoomFactor,
+                baseZoom:  camera.baseZoomFactor
             ) { factor in
                 camera.setZoom(factor)
             }
@@ -234,6 +235,7 @@ struct ModeTab: View {
 struct ZoomStrip: View {
     let available: [CGFloat]
     let current:   CGFloat
+    let baseZoom:  CGFloat   // зум-фактор устройства для оптического 1×
     let onSelect:  (CGFloat) -> Void
 
     var body: some View {
@@ -245,13 +247,23 @@ struct ZoomStrip: View {
                         Circle()
                             .fill(isActive ? Color.white.opacity(0.25) : Color.black.opacity(0.3))
                             .frame(width: isActive ? 44 : 38, height: isActive ? 44 : 38)
-                        Text(LensType.allCases.first { abs($0.zoomFactor - stop) < 0.1 }?.symbol ?? "\(stop)×")
+                        Text(relativeLabel(for: stop))
                             .font(.system(size: isActive ? 15 : 13, weight: .semibold, design: .rounded))
                             .foregroundStyle(.white)
                     }
                     .animation(.spring(duration: 0.25), value: isActive)
                 }
             }
+        }
+    }
+
+    /// Переводим координату устройства → человеческий множитель (0.5×, 1×, 3×…)
+    private func relativeLabel(for stop: CGFloat) -> String {
+        let rel = stop / max(baseZoom, 1e-3)
+        if rel < 1.0 {
+            return String(format: "%.1f×", rel)
+        } else {
+            return "\(Int(rel.rounded()))×"
         }
     }
 }

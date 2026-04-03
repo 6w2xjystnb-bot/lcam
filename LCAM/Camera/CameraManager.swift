@@ -18,6 +18,8 @@ final class CameraManager: NSObject, ObservableObject {
     @Published var nightModeSuggested = false
     @Published var zoomFactor: CGFloat = 1.0
     @Published var availableZoomStops: [CGFloat] = [1.0]
+    /// Зум-фактор устройства, соответствующий оптическому 1× (главный модуль)
+    @Published var baseZoomFactor: CGFloat = 1.0
 
     // MARK: - AVFoundation
     let session = AVCaptureSession()
@@ -77,10 +79,7 @@ final class CameraManager: NSObject, ObservableObject {
 
         Task { @MainActor in
             self.isSessionRunning = self.session.isRunning
-            self.detectZoomStops()
-            // Явно стартуем на главном широкоугольном модуле (1×),
-            // иначе Triple/DualWide камера остаётся на 0.5× по умолчанию
-            self.setZoom(1.0)
+            self.detectZoomStops() // устанавливает baseZoomFactor и setZoom внутри
         }
     }
 
@@ -148,22 +147,34 @@ final class CameraManager: NSObject, ObservableObject {
         }
     }
 
-    // Определяем доступные стопы зума (0.5×, 1×, 2×, 5×...)
+    // Определяем доступные стопы зума через virtualDeviceSwitchOverVideoZoomFactors —
+    // единственный надёжный способ найти координаты физических модулей у мультикамеры.
+    // На iPhone 13 Pro (0.5×/1×/3×): switchFactors = [2, 6] → minZoom=1 (UW), 2=1×, 6=3×
     private func detectZoomStops() {
         guard let device = deviceInput?.device else { return }
-        var stops: [CGFloat] = []
 
-        // Стандартные стопы на основе min/max зума устройства
-        let minZoom = device.minAvailableVideoZoomFactor
-        let maxZoom = device.maxAvailableVideoZoomFactor
+        let minZoom      = device.minAvailableVideoZoomFactor
+        let maxZoom      = device.maxAvailableVideoZoomFactor
+        let switchFactors = device.virtualDeviceSwitchOverVideoZoomFactors
+            .map { CGFloat($0.doubleValue) }
+            .filter { $0 <= maxZoom }
 
-        for stop: CGFloat in [0.5, 1.0, 2.0, 5.0, 10.0] {
-            if stop >= minZoom && stop <= maxZoom {
-                stops.append(stop)
-            }
+        var stops: [CGFloat]
+
+        if switchFactors.isEmpty {
+            // Одиночная камера — только один стоп
+            stops           = [1.0]
+            baseZoomFactor  = 1.0
+        } else {
+            // Ультраширик на minZoom, затем каждый переключатель = физический модуль
+            stops = [minZoom] + switchFactors
+            // Первый switch-over = главный широкоугольный = наш "1×"
+            baseZoomFactor = switchFactors[0]
         }
-        if stops.isEmpty { stops = [1.0] }
+
         availableZoomStops = stops
+        // Стартуем на главном модуле, а не на ультраширике
+        setZoom(baseZoomFactor)
     }
 
     // MARK: - Зум

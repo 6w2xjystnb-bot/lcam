@@ -91,6 +91,12 @@ struct CameraView: View {
                         baseZoomForPinch = min(max(baseZoomForPinch * scale, 0.5), 15.0)
                     }
             )
+            .onChange(of: camera.baseZoomFactor) { _, base in
+                // Первый раз когда detectZoomStops() выставил базу — синхронизируем
+                // стартовую точку для pinch-жеста, иначе первый щипок начинается
+                // с 1.0 (ультраширик) вместо реального положения главного модуля
+                baseZoomForPinch = base
+            }
             .onChange(of: settings.nightModeSuggested) { _, suggested in
                 withAnimation(.spring(duration: 0.4)) {
                     nightModeBanner = suggested && settings.captureMode == .auto
