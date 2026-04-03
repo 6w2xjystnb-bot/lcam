@@ -62,19 +62,27 @@ final class NightProcessor {
         return final ?? denoised
     }
 
-    // MARK: - Простое попиксельное среднее (стекинг)
+    // MARK: - Стекинг в линейном пространстве
 
+    /// Усредняем кадры в линейном свете (после sRGB→linear) и возвращаем обратно в sRGB.
+    /// Это критически важно: усреднение в гамма-пространстве вносит ~18% ошибку яркости
+    /// и неправильно подавляет шум (шум некоррелирован в линейном, не в гамма-пространстве).
     private func stackFrames(_ frames: [AlignedFrame]) -> CVPixelBuffer? {
         guard let first = frames.first?.pixelBuffer else { return nil }
         let width  = CVPixelBufferGetWidth(first)
         let height = CVPixelBufferGetHeight(first)
 
-        // Аккумулятор в Float32 для точного сложения
+        // Аккумуляторы в линейном Float32
         var accumR = [Float](repeating: 0, count: width * height)
         var accumG = [Float](repeating: 0, count: width * height)
         var accumB = [Float](repeating: 0, count: width * height)
-
         var validCount = 0
+
+        // sRGB → linear (точная формула IEC 61966-2-1)
+        func toLinear(_ u: UInt8) -> Float {
+            let x = Float(u) / 255.0
+            return x <= 0.04045 ? x / 12.92 : pow((x + 0.055) / 1.055, 2.4)
+        }
 
         for frame in frames {
             let buf = frame.pixelBuffer
@@ -91,14 +99,14 @@ final class NightProcessor {
             let bytesPerRow = CVPixelBufferGetBytesPerRow(buf)
             let ptr = base.assumingMemoryBound(to: UInt8.self)
 
-            // Формат BGRA: байты [B, G, R, A]
             for y in 0..<height {
                 for x in 0..<width {
                     let offset = y * bytesPerRow + x * 4
                     let idx    = y * width + x
-                    accumB[idx] += Float(ptr[offset + 0]) / 255.0
-                    accumG[idx] += Float(ptr[offset + 1]) / 255.0
-                    accumR[idx] += Float(ptr[offset + 2]) / 255.0
+                    // BGRA: [B,G,R,A]
+                    accumB[idx] += toLinear(ptr[offset + 0])
+                    accumG[idx] += toLinear(ptr[offset + 1])
+                    accumR[idx] += toLinear(ptr[offset + 2])
                 }
             }
             CVPixelBufferUnlockBaseAddress(buf, .readOnly)
@@ -106,10 +114,14 @@ final class NightProcessor {
         }
 
         guard validCount > 0 else { return first }
-
         let n = Float(validCount)
 
-        // Создаём выходной буфер
+        // linear → sRGB
+        func toSRGB(_ x: Float) -> UInt8 {
+            let c = x <= 0.0031308 ? 12.92 * x : 1.055 * pow(x, 1.0/2.4) - 0.055
+            return UInt8(min(max(c * 255.0, 0), 255))
+        }
+
         var outputBuf: CVPixelBuffer?
         CVPixelBufferCreate(
             kCFAllocatorDefault, width, height, kCVPixelFormatType_32BGRA,
@@ -131,9 +143,9 @@ final class NightProcessor {
             for x in 0..<width {
                 let srcIdx = y * width + x
                 let dstOff = y * outBytesPerRow + x * 4
-                outPtr[dstOff + 0] = UInt8(min(accumB[srcIdx] / n * 255.0, 255.0))
-                outPtr[dstOff + 1] = UInt8(min(accumG[srcIdx] / n * 255.0, 255.0))
-                outPtr[dstOff + 2] = UInt8(min(accumR[srcIdx] / n * 255.0, 255.0))
+                outPtr[dstOff + 0] = toSRGB(accumB[srcIdx] / n)
+                outPtr[dstOff + 1] = toSRGB(accumG[srcIdx] / n)
+                outPtr[dstOff + 2] = toSRGB(accumR[srcIdx] / n)
                 outPtr[dstOff + 3] = 255
             }
         }

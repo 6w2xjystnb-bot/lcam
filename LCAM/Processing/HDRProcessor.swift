@@ -288,7 +288,27 @@ final class HDRProcessor {
         uint  frameCount;
     };
 
-    // Добавляем взвешенный вклад кадра в аккумулятор
+    // ─── sRGB ↔ Linear конверсии ─────────────────────────────────────────────
+    // Усреднение и модель шума корректны ТОЛЬКО в линейном свете.
+    // Усреднение в гамма-пространстве занижает яркость (~18% ошибки).
+
+    float3 srgbToLinear(float3 c) {
+        return float3(
+            c.r <= 0.04045 ? c.r / 12.92 : pow((c.r + 0.055) / 1.055, 2.4),
+            c.g <= 0.04045 ? c.g / 12.92 : pow((c.g + 0.055) / 1.055, 2.4),
+            c.b <= 0.04045 ? c.b / 12.92 : pow((c.b + 0.055) / 1.055, 2.4)
+        );
+    }
+
+    float linearToSRGB(float x) {
+        return x <= 0.0031308 ? 12.92 * x : 1.055 * pow(x, 1.0/2.4) - 0.055;
+    }
+
+    float3 linearToSRGB3(float3 c) {
+        return float3(linearToSRGB(c.r), linearToSRGB(c.g), linearToSRGB(c.b));
+    }
+
+    // ─── Взвешенное накопление кадров (в линейном пространстве) ──────────────
     kernel void mergeFrames(
         texture2d<float, access::read>       srcFrame  [[texture(0)]],
         texture2d<float, access::read_write> accumRGB  [[texture(1)]],
@@ -300,29 +320,34 @@ final class HDRProcessor {
     ) {
         if (gid.x >= srcFrame.get_width() || gid.y >= srcFrame.get_height()) return;
 
-        float4 px  = srcFrame.read(gid);
-        float4 ref = refFrame.read(gid);
+        float4 pxSRGB  = srcFrame.read(gid);
+        float4 refSRGB = refFrame.read(gid);
 
-        // Яркость пикселя (для дробового шума)
-        float luma = dot(px.rgb, float3(0.2126, 0.7152, 0.0722));
+        // Конвертируем в линейный свет перед всеми вычислениями
+        float3 px  = srgbToLinear(pxSRGB.rgb);
+        float3 ref = srgbToLinear(refSRGB.rgb);
+
+        // Модель шума корректна в линейном пространстве:
+        // σ² = readNoise + shotNoise × signal   (Poisson + read noise)
+        float luma   = dot(px, float3(0.2126, 0.7152, 0.0722));
         float sigma2 = noise.readNoise + noise.shotNoise * luma;
 
-        // Разница с опорным кадром: если велика — снижаем вес (детекция движения)
-        float4 delta  = px - ref;
-        float  delta2 = dot(delta.rgb, delta.rgb);
+        // Вес: exp(-||Δ||² / 2σ²) — чем больше движение, тем меньше вес
+        float3 delta  = px - ref;
+        float  delta2 = dot(delta, delta);
         float  weight = exp(-delta2 / (2.0 * sigma2 * float(noise.frameCount)));
 
-        // Для первого кадра вес всегда 1.0
-        if (frameIdx == 0) weight = 1.0;
+        if (frameIdx == 0) weight = 1.0;  // опорный кадр всегда с весом 1
 
         float4 prevRGB = accumRGB.read(gid);
         float  prevW   = accumW.read(gid).r;
 
-        accumRGB.write(prevRGB + weight * px, gid);
+        // Накапливаем линейные значения
+        accumRGB.write(prevRGB + float4(weight * px, 0.0), gid);
         accumW.write(float4(prevW + weight, 0, 0, 0), gid);
     }
 
-    // Нормализация: делим накопленный цвет на сумму весов
+    // ─── Нормализация + конвертация обратно в sRGB ───────────────────────────
     kernel void normalizeMerge(
         texture2d<float, access::read>  accumRGB [[texture(0)]],
         texture2d<float, access::read>  accumW   [[texture(1)]],
@@ -330,12 +355,16 @@ final class HDRProcessor {
         uint2 gid [[thread_position_in_grid]]
     ) {
         if (gid.x >= output.get_width() || gid.y >= output.get_height()) return;
-        float4 rgb = accumRGB.read(gid);
-        float  w   = max(accumW.read(gid).r, 1e-6);
-        output.write(clamp(rgb / w, 0.0, 1.0), gid);
+
+        float3 linearRGB = accumRGB.read(gid).rgb;
+        float  w         = max(accumW.read(gid).r, 1e-6);
+
+        // Среднее в линейном → обратно в sRGB для совместимости с дальнейшим пайплайном
+        float3 srgb = clamp(linearToSRGB3(linearRGB / w), 0.0, 1.0);
+        output.write(float4(srgb, 1.0), gid);
     }
 
-    // Локальное тональное отображение: поднимаем тени, восстанавливаем света
+    // ─── Локальный тон-маппинг (не используется в основном пути, только как фолбэк) ─
     kernel void localToneMap(
         texture2d<float, access::read>  input  [[texture(0)]],
         texture2d<float, access::write> output [[texture(1)]],
@@ -344,12 +373,9 @@ final class HDRProcessor {
         if (gid.x >= output.get_width() || gid.y >= output.get_height()) return;
         float4 px   = input.read(gid);
         float  luma = dot(px.rgb, float3(0.2126, 0.7152, 0.0722));
-
-        // S-кривая: тени поднимаем, света сдерживаем
         float mapped = luma < 0.5
-            ? 2.0 * luma * luma          // тени: мягкий подъём
-            : 1.0 - 2.0*(1.0-luma)*(1.0-luma); // света: мягкое восстановление
-
+            ? 2.0 * luma * luma
+            : 1.0 - 2.0*(1.0-luma)*(1.0-luma);
         float3 result = luma > 0.001 ? px.rgb * (mapped / luma) : px.rgb;
         output.write(float4(clamp(result, 0.0, 1.0), px.a), gid);
     }
