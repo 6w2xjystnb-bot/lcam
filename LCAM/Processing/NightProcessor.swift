@@ -153,8 +153,7 @@ final class NightProcessor {
         let sharpenAfterBlur = blurred
             .applyingFilter("CIUnsharpMask", parameters: [
                 "inputRadius":    blurRadius * 0.5,
-                "inputIntensity": CGFloat(strength * 0.4),
-                "inputThreshold": 0.03
+                "inputIntensity": CGFloat(strength * 0.4)
             ])
 
         // Проход 3: Noise Reduction фильтр CoreImage (только iOS 12+)

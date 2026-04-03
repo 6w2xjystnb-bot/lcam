@@ -177,8 +177,7 @@ final class HDRProcessor {
         let sharpened = saturated
             .applyingFilter("CIUnsharpMask", parameters: [
                 "inputRadius":    2.5,
-                "inputIntensity": CGFloat(sharpeningStrength * 0.9),
-                "inputThreshold": 0.02
+                "inputIntensity": CGFloat(sharpeningStrength * 0.9)
             ])
 
         // Шаг 4: Небольшая цветовая матрица для "GCam-look"

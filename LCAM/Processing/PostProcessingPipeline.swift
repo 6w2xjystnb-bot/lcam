@@ -154,8 +154,7 @@ final class PostProcessingPipeline: ObservableObject {
         let ci      = CIImage(cvPixelBuffer: buffer)
         let sharp   = ci.applyingFilter("CIUnsharpMask", parameters: [
             "inputRadius":    1.8,
-            "inputIntensity": CGFloat(strength),
-            "inputThreshold": 0.02
+            "inputIntensity": CGFloat(strength)
         ])
         var out: CVPixelBuffer?
         let w = CVPixelBufferGetWidth(buffer)
