@@ -32,8 +32,11 @@ final class CameraManager: NSObject, ObservableObject {
     nonisolated(unsafe) private var liveDevice: AVCaptureDevice?
 
     /// RAW-формат доступный на текущем устройстве; nil — RAW не поддерживается.
-    /// Определяется после конфигурации photoOutput.
     private(set) var rawPixelFormat: OSType? = nil
+
+    /// ZSL-буфер: кадры из видеопотока накапливаются непрерывно.
+    /// При захвате используются эти кадры (0 задержки) вместо ожидания burst.
+    private let zslBuffer = ZSLBuffer()
 
     // MARK: - Внутренние очереди
     private let sessionQueue  = DispatchQueue(label: "lcam.session",  qos: .userInitiated)
@@ -152,6 +155,11 @@ final class CameraManager: NSObject, ObservableObject {
     }
 
     private func addVideoDataOutput() {
+        // Запрашиваем BGRA чтобы кадры можно было сразу передавать в Metal/CoreImage.
+        // ZSL-буфер использует эти кадры при нажатии кнопки.
+        videoDataOutput.videoSettings = [
+            kCVPixelBufferPixelFormatTypeKey as String: kCVPixelFormatType_32BGRA
+        ]
         videoDataOutput.setSampleBufferDelegate(self, queue: metaQueue)
         videoDataOutput.alwaysDiscardsLateVideoFrames = true
         if session.canAddOutput(videoDataOutput) {
@@ -292,14 +300,31 @@ final class CameraManager: NSObject, ObservableObject {
 
         let frameCount = settings.captureMode.burstFrameCount(lightLevel: lightLevel)
 
-        // BurstCapture захватывает N кадров.
-        // Если устройство поддерживает RAW — снимаем в RAW (Bayer),
-        // иначе fallback на обычный BGRA.
+        // ── ZSL путь: мгновенный захват из кольцевого буфера ──────────────────
+        // Если буфер уже содержит достаточно кадров — используем их сразу.
+        // Кадры были сняты ДО нажатия кнопки (= устройство было стабильно).
+        // RAW для ZSL недоступен (видеопоток не поддерживает Bayer), поэтому isRaw=false.
+        if rawPixelFormat == nil, zslBuffer.isReady(for: frameCount) {
+            let zslFrames = zslBuffer.takeLast(frameCount)
+            // Заглушка EXIF: реальные данные недоступны из видеопотока
+            let exif = ExifMetadata(
+                iso: Int(currentISO), shutterSpeed: currentShutter,
+                aperture: currentAperture, focalLength: 26.0,
+                brightnessValue: Double(lightLevel * 20.0 - 4.0),
+                flashFired: false, colorSpace: "sRGB",
+                captureMode: settings.captureMode, location: nil
+            )
+            Task { await self.runPipeline(frames: zslFrames, exif: exif, settings: settings, isRaw: false) }
+            return
+        }
+
+        // ── Burst путь: обычный захват через AVCapturePhotoOutput ──────────────
+        // Используется когда ZSL недоступен или когда захватываем в RAW.
         let burst = BurstCapture(
             photoOutput:  photoOutput,
             targetFrames: frameCount,
             settings:     settings,
-            rawFormat:    rawPixelFormat   // nil → BGRA fallback
+            rawFormat:    rawPixelFormat
         )
         activeBurst = burst
 
@@ -359,14 +384,20 @@ extension CameraManager: AVCaptureVideoDataOutputSampleBufferDelegate {
         let aperture   = Double(device.lensAperture)
 
         // Оцениваем освещённость: EV₁₀₀ = log2(f² / t / (ISO/100))
-        let ev100 = log2(aperture * aperture / max(shutterSec, 1e-6)) - log2(Double(iso) / 100.0)
-        // EV100 диапазон: -4 (ночь) .. 16 (яркое солнце) → нормализуем к [0..1]
+        let ev100      = log2(aperture * aperture / max(shutterSec, 1e-6)) - log2(Double(iso) / 100.0)
         let normalised = Float(min(max((ev100 + 4.0) / 20.0, 0.0), 1.0))
+
+        // ZSL: пишем каждый кадр в кольцевой буфер.
+        // pixelBuffer ретейнится буфером пока хранится в массиве.
+        if let pixelBuffer = CMSampleBufferGetImageBuffer(sampleBuffer) {
+            let ts = CMSampleBufferGetPresentationTimeStamp(sampleBuffer)
+            zslBuffer.push(pixelBuffer, timestamp: ts, iso: iso, shutterSec: shutterSec)
+        }
 
         Task { @MainActor [weak self] in
             guard let self else { return }
-            self.currentISO     = iso
-            self.currentShutter = shutterSec
+            self.currentISO      = iso
+            self.currentShutter  = shutterSec
             self.currentAperture = aperture
             self.lightLevel      = normalised
             self.nightModeSuggested = normalised < 0.18
