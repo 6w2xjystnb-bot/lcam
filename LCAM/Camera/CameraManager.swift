@@ -147,34 +147,40 @@ final class CameraManager: NSObject, ObservableObject {
         }
     }
 
-    // Определяем доступные стопы зума через virtualDeviceSwitchOverVideoZoomFactors —
-    // единственный надёжный способ найти координаты физических модулей у мультикамеры.
-    // На iPhone 13 Pro (0.5×/1×/3×): switchFactors = [2, 6] → minZoom=1 (UW), 2=1×, 6=3×
+    // Определяем доступные стопы и координату 1x через minAvailableVideoZoomFactor.
+    // Два варианта системы координат виртуального устройства:
+    //   А) minZoom < 1.0 (напр. 0.5) → UW на minZoom, ГЛАВНАЯ на 1.0, телевик на switchFactors > 1
+    //   Б) minZoom = 1.0            → UW на 1.0, ГЛАВНАЯ на switchFactors[0], телевик на switchFactors[1]
     private func detectZoomStops() {
         guard let device = deviceInput?.device else { return }
 
-        let minZoom      = device.minAvailableVideoZoomFactor
-        let maxZoom      = device.maxAvailableVideoZoomFactor
+        let minZoom       = device.minAvailableVideoZoomFactor
+        let maxZoom       = device.maxAvailableVideoZoomFactor
         let switchFactors = device.virtualDeviceSwitchOverVideoZoomFactors
             .map { CGFloat($0.doubleValue) }
             .filter { $0 <= maxZoom }
 
         var stops: [CGFloat]
+        let wideZoom: CGFloat
 
-        if switchFactors.isEmpty {
-            // Одиночная камера — только один стоп
-            stops           = [1.0]
-            baseZoomFactor  = 1.0
+        if minZoom < 1.0 {
+            // Система А: ultrawide ниже 1.0, главный модуль строго на 1.0
+            wideZoom = 1.0
+            stops    = [minZoom, 1.0] + switchFactors.filter { $0 > 1.0 }
+        } else if switchFactors.isEmpty {
+            // Одиночная камера
+            wideZoom = 1.0
+            stops    = [1.0]
         } else {
-            // Ультраширик на minZoom, затем каждый переключатель = физический модуль
-            stops = [minZoom] + switchFactors
-            // Первый switch-over = главный широкоугольный = наш "1×"
-            baseZoomFactor = switchFactors[0]
+            // Система Б: UW = 1.0, главный модуль = switchFactors[0]
+            wideZoom = switchFactors[0]
+            stops    = [1.0] + switchFactors
         }
 
+        stops              = stops.filter { $0 <= maxZoom }
         availableZoomStops = stops
-        // Стартуем на главном модуле, а не на ультраширике
-        setZoom(baseZoomFactor)
+        baseZoomFactor     = wideZoom
+        setZoom(wideZoom)
     }
 
     // MARK: - Зум

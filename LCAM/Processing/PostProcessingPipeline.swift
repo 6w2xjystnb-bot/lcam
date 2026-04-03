@@ -172,8 +172,10 @@ final class PostProcessingPipeline: ObservableObject {
                 "inputPoint3": CIVector(x: 0.85, y: 0.85 - hr * 0.05),
                 "inputPoint4": CIVector(x: 1.0,  y: 1.0)
             ])
-            .applyingFilter("CIVibrance", parameters: [
-                "inputAmount": CGFloat(settings.saturationBoost * 1.8)
+            .applyingFilter("CIColorControls", parameters: [
+                "inputSaturation": CGFloat(1.0 + settings.saturationBoost * 0.6),
+                "inputBrightness": 0.0,
+                "inputContrast":   1.02
             ])
             .applyingFilter("CIUnsharpMask", parameters: [
                 "inputRadius":    2.0,

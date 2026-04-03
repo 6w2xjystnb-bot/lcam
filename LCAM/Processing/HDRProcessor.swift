@@ -168,9 +168,12 @@ final class HDRProcessor {
                 "inputPoint4": CIVector(x: 1.0,  y: 1.0)
             ])
 
+        // CIColorControls вместо CIVibrance: не имеет канального сдвига в жёлто-зелёный
         let saturated = toneCurve
-            .applyingFilter("CIVibrance", parameters: [
-                "inputAmount": CGFloat(saturationBoost * 1.8)
+            .applyingFilter("CIColorControls", parameters: [
+                "inputSaturation": CGFloat(1.0 + saturationBoost * 0.6),
+                "inputBrightness": 0.0,
+                "inputContrast":   1.02
             ])
 
         let sharpened = saturated
