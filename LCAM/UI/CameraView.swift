@@ -156,7 +156,9 @@ struct CameraView: View {
     }
 
     private func setupCamera() {
-        // Связываем настройки
+        // Передаём общий объект настроек из окружения, чтобы камера и UI
+        // работали с одним экземпляром (и чтобы settings не освободился раньше времени)
+        camera.settings = settings
         camera.onPhoto = { [weak gallery] result in
             Task { @MainActor in gallery?.add(result) }
         }

@@ -35,7 +35,7 @@ final class CameraManager: NSObject, ObservableObject {
 
     // MARK: - Зависимости
     private let pipeline: PostProcessingPipeline
-    private weak var settings: CameraSettings?
+    var settings: CameraSettings?
 
     // Коллбэк — вызывается когда фото готово
     var onPhoto: ((PhotoResult) -> Void)?
