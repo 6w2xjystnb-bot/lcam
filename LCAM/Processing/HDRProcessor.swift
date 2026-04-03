@@ -149,40 +149,37 @@ final class HDRProcessor {
         to buffer: CVPixelBuffer,
         settings: CameraSettings
     ) async -> CVPixelBuffer? {
-        // Захватываем @MainActor-изолированные свойства до начала GPU-работы
         let (shadowLift, highlightRecovery, saturationBoost, sharpeningStrength) = await MainActor.run {
             (settings.shadowLift, settings.highlightRecovery, settings.saturationBoost, settings.sharpeningStrength)
         }
 
         let ci = CIImage(cvPixelBuffer: buffer)
 
-        // Тональная кривая: подъём мидтонов (+8%) + умеренный подъём теней
-        let sl = CGFloat(shadowLift)
-        let hr = CGFloat(highlightRecovery)
-        let toneCurve = ci
-            .applyingFilter("CIToneCurve", parameters: [
-                "inputPoint0": CIVector(x: 0.0,  y: 0.0),
-                "inputPoint1": CIVector(x: 0.12, y: 0.12 + sl * 0.7),
-                "inputPoint2": CIVector(x: 0.5,  y: 0.54),
-                "inputPoint3": CIVector(x: 0.85, y: 0.85 - hr * 0.05),
-                "inputPoint4": CIVector(x: 1.0,  y: 1.0)
+        // CIHighlightShadowAdjust — Apple's собственный HDR-фильтр.
+        // inputHighlightAmount < 1.0 восстанавливает пересвет;
+        // inputShadowAmount > 0 поднимает тени.
+        // Не трогает мидтоны и не вносит цветовых сдвигов.
+        let hdrAdjusted = ci
+            .applyingFilter("CIHighlightShadowAdjust", parameters: [
+                "inputHighlightAmount": CGFloat(max(0.0, 1.0 - Double(highlightRecovery) * 0.6)),
+                "inputShadowAmount":    CGFloat(shadowLift * 4.0)
             ])
 
-        // CIColorControls вместо CIVibrance: не имеет канального сдвига в жёлто-зелёный
-        let saturated = toneCurve
+        // Лёгкое усиление насыщенности без цветового сдвига
+        let colored = hdrAdjusted
             .applyingFilter("CIColorControls", parameters: [
-                "inputSaturation": CGFloat(1.0 + saturationBoost * 0.6),
+                "inputSaturation": CGFloat(1.0 + Double(saturationBoost) * 0.5),
                 "inputBrightness": 0.0,
                 "inputContrast":   1.02
             ])
 
-        let sharpened = saturated
+        // Адаптивная резкость — небольшой радиус, чтобы не было ореолов
+        let sharpened = colored
             .applyingFilter("CIUnsharpMask", parameters: [
-                "inputRadius":    2.0,
-                "inputIntensity": CGFloat(sharpeningStrength * 0.7)
+                "inputRadius":    1.5,
+                "inputIntensity": CGFloat(sharpeningStrength * 0.55)
             ])
 
-        // Финальный рендер в новый CVPixelBuffer
         let w = CVPixelBufferGetWidth(buffer)
         let h = CVPixelBufferGetHeight(buffer)
         guard let result = createPixelBuffer(width: w, height: h) else { return buffer }

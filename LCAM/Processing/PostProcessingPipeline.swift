@@ -162,24 +162,19 @@ final class PostProcessingPipeline: ObservableObject {
 
     private func applyFallbackProcessing(to buffer: CVPixelBuffer, settings: CameraSettings) -> CVPixelBuffer? {
         let ci = CIImage(cvPixelBuffer: buffer)
-        let sl = CGFloat(settings.shadowLift)
-        let hr = CGFloat(settings.highlightRecovery)
         let processed = ci
-            .applyingFilter("CIToneCurve", parameters: [
-                "inputPoint0": CIVector(x: 0.0,  y: 0.0),
-                "inputPoint1": CIVector(x: 0.12, y: 0.12 + sl * 0.7),
-                "inputPoint2": CIVector(x: 0.5,  y: 0.54),
-                "inputPoint3": CIVector(x: 0.85, y: 0.85 - hr * 0.05),
-                "inputPoint4": CIVector(x: 1.0,  y: 1.0)
+            .applyingFilter("CIHighlightShadowAdjust", parameters: [
+                "inputHighlightAmount": CGFloat(max(0.0, 1.0 - Double(settings.highlightRecovery) * 0.6)),
+                "inputShadowAmount":    CGFloat(settings.shadowLift * 4.0)
             ])
             .applyingFilter("CIColorControls", parameters: [
-                "inputSaturation": CGFloat(1.0 + settings.saturationBoost * 0.6),
+                "inputSaturation": CGFloat(1.0 + Double(settings.saturationBoost) * 0.5),
                 "inputBrightness": 0.0,
                 "inputContrast":   1.02
             ])
             .applyingFilter("CIUnsharpMask", parameters: [
-                "inputRadius":    2.0,
-                "inputIntensity": CGFloat(settings.sharpeningStrength * 0.7)
+                "inputRadius":    1.5,
+                "inputIntensity": CGFloat(settings.sharpeningStrength * 0.55)
             ])
             .applyingFilter("CIUnsharpMask", parameters: [
                 "inputRadius":    2.0,

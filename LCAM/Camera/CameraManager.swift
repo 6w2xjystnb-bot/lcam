@@ -147,10 +147,10 @@ final class CameraManager: NSObject, ObservableObject {
         }
     }
 
-    // Определяем доступные стопы и координату 1x через minAvailableVideoZoomFactor.
-    // Два варианта системы координат виртуального устройства:
-    //   А) minZoom < 1.0 (напр. 0.5) → UW на minZoom, ГЛАВНАЯ на 1.0, телевик на switchFactors > 1
-    //   Б) minZoom = 1.0            → UW на 1.0, ГЛАВНАЯ на switchFactors[0], телевик на switchFactors[1]
+    // Определяем стопы зума и координату 1× через constituentDevices —
+    // единственный надёжный API: каждый физический модуль имеет deviceType,
+    // по которому находим builtInWideAngleCamera = "главный = 1×".
+    // constituentDevices упорядочены от широкого к узкому, как switchFactors.
     private func detectZoomStops() {
         guard let device = deviceInput?.device else { return }
 
@@ -158,26 +158,30 @@ final class CameraManager: NSObject, ObservableObject {
         let maxZoom       = device.maxAvailableVideoZoomFactor
         let switchFactors = device.virtualDeviceSwitchOverVideoZoomFactors
             .map { CGFloat($0.doubleValue) }
-            .filter { $0 <= maxZoom }
 
-        var stops: [CGFloat]
+        let constituents  = device.constituentDevices
+
+        // Строим таблицу: физический модуль → зум-фактор старта
+        // constituent[0] стартует на minZoom, [1] на switchFactors[0], [2] на switchFactors[1]…
+        var zoomForIndex: [CGFloat] = [minZoom]
+        zoomForIndex += switchFactors
+
+        // Ищем индекс буiltInWideAngleCamera в отсортированном массиве
+        let wideIdx = constituents.firstIndex { $0.deviceType == .builtInWideAngleCamera }
+
         let wideZoom: CGFloat
-
-        if minZoom < 1.0 {
-            // Система А: ultrawide ниже 1.0, главный модуль строго на 1.0
-            wideZoom = 1.0
-            stops    = [minZoom, 1.0] + switchFactors.filter { $0 > 1.0 }
-        } else if switchFactors.isEmpty {
-            // Одиночная камера
-            wideZoom = 1.0
-            stops    = [1.0]
+        if let idx = wideIdx, idx < zoomForIndex.count {
+            wideZoom = zoomForIndex[idx]
         } else {
-            // Система Б: UW = 1.0, главный модуль = switchFactors[0]
-            wideZoom = switchFactors[0]
-            stops    = [1.0] + switchFactors
+            // Fallback: нет составных устройств (одиночная камера)
+            wideZoom = 1.0
         }
 
-        stops              = stops.filter { $0 <= maxZoom }
+        // Стопы = minZoom + все switchFactors, обрезанные до maxZoom
+        var stops: [CGFloat] = [minZoom] + switchFactors.filter { $0 <= maxZoom }
+        // Дедупликация и сортировка
+        stops = Array(Set(stops)).sorted()
+
         availableZoomStops = stops
         baseZoomFactor     = wideZoom
         setZoom(wideZoom)

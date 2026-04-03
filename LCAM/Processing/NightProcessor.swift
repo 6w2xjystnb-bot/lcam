@@ -182,37 +182,26 @@ final class NightProcessor {
     private func applyNightColorScience(to buffer: CVPixelBuffer, shadowLift: Float) -> CVPixelBuffer? {
         let image = CIImage(cvPixelBuffer: buffer)
 
-        // Подъём экспозиции: ночные снимки должны выглядеть снятыми "как днём"
-        // Night Sight Google поднимает яркость довольно агрессивно
-        let exposureAdjusted = image
+        // CIHighlightShadowAdjust: подъём теней + мягкое восстановление светов
+        // Не трогает белый баланс, не вносит цветовых сдвигов
+        let hdrAdjusted = image
+            .applyingFilter("CIHighlightShadowAdjust", parameters: [
+                "inputHighlightAmount": 0.6,
+                "inputShadowAmount":    CGFloat(shadowLift * 6.0)
+            ])
+
+        // +0.5 EV для ночи — Night Sight делает ночь светлее, но без артефактов
+        let exposed = hdrAdjusted
             .applyingFilter("CIExposureAdjust", parameters: [
-                "inputEV": CGFloat(shadowLift * 8.0 + 0.3)
+                "inputEV": CGFloat(0.4 + Double(shadowLift) * 1.5)
             ])
 
-        // Тональная кривая ночи: сильно поднимаем тени, меньше трогаем света
-        let toneCurve = exposureAdjusted
-            .applyingFilter("CIToneCurve", parameters: [
-                "inputPoint0": CIVector(x: 0.0,  y: 0.0),
-                "inputPoint1": CIVector(x: 0.1,  y: CGFloat(0.1 + Double(shadowLift) * 1.5)),
-                "inputPoint2": CIVector(x: 0.3,  y: CGFloat(0.35 + Double(shadowLift))),
-                "inputPoint3": CIVector(x: 0.7,  y: 0.72),
-                "inputPoint4": CIVector(x: 1.0,  y: 1.0)
-            ])
-
-        // Небольшое потепление (Night Sight добавляет тепла к ночным сценам)
-        let warmed = toneCurve
-            .applyingFilter("CITemperatureAndTint", parameters: [
-                "inputNeutral":        CIVector(x: 6500, y: 0),
-                "inputTargetNeutral":  CIVector(x: 5800, y: 0)
-            ])
-
-        // Виньетирование — лёгкое затемнение краёв для художественного эффекта
-        let width  = CGFloat(CVPixelBufferGetWidth(buffer))
-        let height = CGFloat(CVPixelBufferGetHeight(buffer))
-        let vignetted = warmed
-            .applyingFilter("CIVignette", parameters: [
-                "inputIntensity": 0.3,
-                "inputRadius":    min(width, height) * 0.7
+        // Нейтральная насыщенность
+        let colored = exposed
+            .applyingFilter("CIColorControls", parameters: [
+                "inputSaturation": 1.12,
+                "inputBrightness": 0.0,
+                "inputContrast":   1.04
             ])
 
         let w = CVPixelBufferGetWidth(buffer)
@@ -224,7 +213,7 @@ final class NightProcessor {
             &output
         )
         guard let output else { return buffer }
-        ciContext.render(vignetted, to: output)
+        ciContext.render(colored, to: output)
         return output
     }
 }
