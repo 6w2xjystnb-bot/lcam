@@ -156,38 +156,27 @@ final class HDRProcessor {
 
         let ci = CIImage(cvPixelBuffer: buffer)
 
-        // Шаг 1: Лёгкое шумоподавление до тональной обработки
-        // (после merge остаётся мелкий зернистый шум)
-        let denoised = ci
-            .applyingFilter("CINoiseReduction", parameters: [
-                "inputNoiseLevel": 0.02,
-                "inputSharpness":  0.6
-            ])
-
-        // Шаг 2: Тональная кривая — подъём теней + мидтонов (GCam-стиль)
-        // Point2 на (0.45, 0.55) даёт +10% яркость в мидтонах без пересвета
+        // Тональная кривая: подъём мидтонов (+8%) + умеренный подъём теней
         let sl = CGFloat(shadowLift)
         let hr = CGFloat(highlightRecovery)
-        let toneCurve = denoised
+        let toneCurve = ci
             .applyingFilter("CIToneCurve", parameters: [
                 "inputPoint0": CIVector(x: 0.0,  y: 0.0),
-                "inputPoint1": CIVector(x: 0.1,  y: 0.1  + sl * 1.2),
-                "inputPoint2": CIVector(x: 0.45, y: 0.53 + sl * 0.25),
-                "inputPoint3": CIVector(x: 0.82, y: 0.84 - hr * 0.06),
+                "inputPoint1": CIVector(x: 0.12, y: 0.12 + sl * 0.7),
+                "inputPoint2": CIVector(x: 0.5,  y: 0.54),
+                "inputPoint3": CIVector(x: 0.85, y: 0.85 - hr * 0.05),
                 "inputPoint4": CIVector(x: 1.0,  y: 1.0)
             ])
 
-        // Шаг 3: Цветовой баланс — насыщенность как GCam
         let saturated = toneCurve
             .applyingFilter("CIVibrance", parameters: [
-                "inputAmount": CGFloat(saturationBoost * 2.2)
+                "inputAmount": CGFloat(saturationBoost * 1.8)
             ])
 
-        // Шаг 4: Резкость
         let sharpened = saturated
             .applyingFilter("CIUnsharpMask", parameters: [
                 "inputRadius":    2.0,
-                "inputIntensity": CGFloat(sharpeningStrength * 0.85)
+                "inputIntensity": CGFloat(sharpeningStrength * 0.7)
             ])
 
         // Финальный рендер в новый CVPixelBuffer

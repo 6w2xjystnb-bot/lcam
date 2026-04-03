@@ -161,23 +161,23 @@ final class PostProcessingPipeline: ObservableObject {
     // MARK: - Фолбэк обработки (Metal недоступен)
 
     private func applyFallbackProcessing(to buffer: CVPixelBuffer, settings: CameraSettings) -> CVPixelBuffer? {
-        let ci  = CIImage(cvPixelBuffer: buffer)
-        let sl  = CGFloat(settings.shadowLift)
-        let hr  = CGFloat(settings.highlightRecovery)
+        let ci = CIImage(cvPixelBuffer: buffer)
+        let sl = CGFloat(settings.shadowLift)
+        let hr = CGFloat(settings.highlightRecovery)
         let processed = ci
-            .applyingFilter("CINoiseReduction", parameters: [
-                "inputNoiseLevel": 0.02,
-                "inputSharpness":  0.6
-            ])
             .applyingFilter("CIToneCurve", parameters: [
                 "inputPoint0": CIVector(x: 0.0,  y: 0.0),
-                "inputPoint1": CIVector(x: 0.1,  y: 0.1  + sl * 1.2),
-                "inputPoint2": CIVector(x: 0.45, y: 0.53 + sl * 0.25),
-                "inputPoint3": CIVector(x: 0.82, y: 0.84 - hr * 0.06),
+                "inputPoint1": CIVector(x: 0.12, y: 0.12 + sl * 0.7),
+                "inputPoint2": CIVector(x: 0.5,  y: 0.54),
+                "inputPoint3": CIVector(x: 0.85, y: 0.85 - hr * 0.05),
                 "inputPoint4": CIVector(x: 1.0,  y: 1.0)
             ])
             .applyingFilter("CIVibrance", parameters: [
-                "inputAmount": CGFloat(settings.saturationBoost * 2.2)
+                "inputAmount": CGFloat(settings.saturationBoost * 1.8)
+            ])
+            .applyingFilter("CIUnsharpMask", parameters: [
+                "inputRadius":    2.0,
+                "inputIntensity": CGFloat(settings.sharpeningStrength * 0.7)
             ])
             .applyingFilter("CIUnsharpMask", parameters: [
                 "inputRadius":    2.0,

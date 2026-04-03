@@ -26,8 +26,8 @@ final class CameraSettings: ObservableObject {
     @Published var processingStrength: Float = 0.85
     @Published var sharpeningStrength: Float = 0.45
     @Published var noiseReductionStrength: Float = 0.7
-    @Published var saturationBoost: Float = 0.22       // +насыщенность как GCam
-    @Published var shadowLift: Float = 0.18            // заметный подъём теней
+    @Published var saturationBoost: Float = 0.15
+    @Published var shadowLift: Float = 0.12
     @Published var highlightRecovery: Float = 0.5
 
     // --- Вспышка и вспомогательное ---
@@ -56,7 +56,7 @@ final class CameraSettings: ObservableObject {
     @Published var nightModeSuggested: Bool = false
 
     // --- Постоянные пользовательские настройки (сохраняются в UserDefaults) ---
-    @AppStorage("savedSaturationBoost") var savedSaturationBoost: Double = 0.22
+    @AppStorage("savedSaturationBoost") var savedSaturationBoost: Double = 0.15
     @AppStorage("savedProcessingStrength") var savedProcessingStrength: Double = 0.85
     @AppStorage("savedSharpeningStrength") var savedSharpeningStrength: Double = 0.45
     @AppStorage("enableRAWCapture") var enableRAWCapture: Bool = false
