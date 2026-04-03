@@ -115,7 +115,17 @@ final class PostProcessingPipeline: ObservableObject {
 
         processingProgress = 0.70
 
-        guard let finalBuffer = processedBuffer ?? frames.first else { return nil }
+        // Если процессор вернул nil (Metal недоступен / ошибка GPU),
+        // применяем минимальную CoreImage-обработку к первому кадру
+        // вместо того чтобы отдавать сырой плоский буфер
+        let finalBuffer: CVPixelBuffer
+        if let pb = processedBuffer {
+            finalBuffer = pb
+        } else if let raw = frames.first {
+            finalBuffer = applyFallbackProcessing(to: raw, settings: settings) ?? raw
+        } else {
+            return nil
+        }
 
         // --- Шаг 3: Конвертация в UIImage ---
         processingStep = .saving
@@ -146,6 +156,33 @@ final class PostProcessingPipeline: ObservableObject {
         )
 
         return PhotoResult(finalImage: finalImage, exif: exif, processingInfo: processingInfo)
+    }
+
+    // MARK: - Фолбэк обработки (Metal недоступен)
+
+    private func applyFallbackProcessing(to buffer: CVPixelBuffer, settings: CameraSettings) -> CVPixelBuffer? {
+        let ci = CIImage(cvPixelBuffer: buffer)
+        let processed = ci
+            .applyingFilter("CIToneCurve", parameters: [
+                "inputPoint0": CIVector(x: 0.0,  y: 0.0),
+                "inputPoint1": CIVector(x: 0.15, y: CGFloat(0.15 + Double(settings.shadowLift))),
+                "inputPoint2": CIVector(x: 0.5,  y: 0.5),
+                "inputPoint3": CIVector(x: 0.85, y: CGFloat(0.85 - Double(settings.highlightRecovery) * 0.1)),
+                "inputPoint4": CIVector(x: 1.0,  y: 1.0)
+            ])
+            .applyingFilter("CIVibrance", parameters: [
+                "inputAmount": CGFloat(settings.saturationBoost * 2.5)
+            ])
+            .applyingFilter("CIUnsharpMask", parameters: [
+                "inputRadius":    2.0,
+                "inputIntensity": CGFloat(settings.sharpeningStrength * 0.8)
+            ])
+        let w = CVPixelBufferGetWidth(buffer)
+        let h = CVPixelBufferGetHeight(buffer)
+        var out: CVPixelBuffer?
+        CVPixelBufferCreate(kCFAllocatorDefault, w, h, kCVPixelFormatType_32BGRA, nil, &out)
+        if let out { ciContext.render(processed, to: out) }
+        return out
     }
 
     // MARK: - Только резкость (Pro режим)

@@ -78,6 +78,9 @@ final class CameraManager: NSObject, ObservableObject {
         Task { @MainActor in
             self.isSessionRunning = self.session.isRunning
             self.detectZoomStops()
+            // Явно стартуем на главном широкоугольном модуле (1×),
+            // иначе Triple/DualWide камера остаётся на 0.5× по умолчанию
+            self.setZoom(1.0)
         }
     }
 
