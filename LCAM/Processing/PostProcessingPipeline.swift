@@ -158,10 +158,13 @@ final class PostProcessingPipeline: ObservableObject {
         return PhotoResult(finalImage: finalImage, exif: exif, processingInfo: processingInfo)
     }
 
-    // MARK: - Фолбэк обработки (Metal недоступен)
+    // MARK: - Фолбэк обработки (Metal/GPU недоступен — только CoreImage CPU)
 
     private func applyFallbackProcessing(to buffer: CVPixelBuffer, settings: CameraSettings) -> CVPixelBuffer? {
         let ci = CIImage(cvPixelBuffer: buffer)
+        // Только тональная коррекция и цвет — без CIUnsharpMask.
+        // Фолбэк означает один кадр без temporal denoising, поэтому
+        // шарпенинг только усилит шум ISP. Лучше чистый результат.
         let processed = ci
             .applyingFilter("CIHighlightShadowAdjust", parameters: [
                 "inputHighlightAmount": CGFloat(max(0.0, 1.0 - Double(settings.highlightRecovery) * 0.6)),
@@ -172,14 +175,6 @@ final class PostProcessingPipeline: ObservableObject {
                 "inputBrightness": 0.0,
                 "inputContrast":   1.02
             ])
-            .applyingFilter("CIUnsharpMask", parameters: [
-                "inputRadius":    1.5,
-                "inputIntensity": CGFloat(settings.sharpeningStrength * 0.55)
-            ])
-            .applyingFilter("CIUnsharpMask", parameters: [
-                "inputRadius":    2.0,
-                "inputIntensity": CGFloat(settings.sharpeningStrength * 0.8)
-            ])
         let w = CVPixelBufferGetWidth(buffer)
         let h = CVPixelBufferGetHeight(buffer)
         var out: CVPixelBuffer?
@@ -188,19 +183,28 @@ final class PostProcessingPipeline: ObservableObject {
         return out
     }
 
-    // MARK: - Только резкость (Pro режим)
+    // MARK: - Pro режим: тональная обработка без добавления резкости
 
     private func applySharpeningOnly(to buffer: CVPixelBuffer, strength: Float) -> CVPixelBuffer {
-        let ci      = CIImage(cvPixelBuffer: buffer)
-        let sharp   = ci.applyingFilter("CIUnsharpMask", parameters: [
-            "inputRadius":    1.8,
-            "inputIntensity": CGFloat(strength)
-        ])
+        // В Pro режиме Apple ISP уже применил свою обработку; добавлять
+        // CIUnsharpMask поверх него только добавит ореолы и зерно.
+        // Применяем только нейтральную тональную коррекцию.
+        let ci    = CIImage(cvPixelBuffer: buffer)
+        let toned = ci
+            .applyingFilter("CIHighlightShadowAdjust", parameters: [
+                "inputHighlightAmount": 0.9,
+                "inputShadowAmount":    0.4
+            ])
+            .applyingFilter("CIColorControls", parameters: [
+                "inputSaturation": 1.05,
+                "inputBrightness": 0.0,
+                "inputContrast":   1.01
+            ])
         var out: CVPixelBuffer?
         let w = CVPixelBufferGetWidth(buffer)
         let h = CVPixelBufferGetHeight(buffer)
         CVPixelBufferCreate(kCFAllocatorDefault, w, h, kCVPixelFormatType_32BGRA, nil, &out)
-        if let out { ciContext.render(sharp, to: out) }
+        if let out { ciContext.render(toned, to: out) }
         return out ?? buffer
     }
 

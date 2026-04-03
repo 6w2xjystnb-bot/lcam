@@ -7,21 +7,26 @@
 import CoreImage
 import CoreVideo
 import Metal
+import MetalPerformanceShaders
 import UIKit
 import Accelerate
 
 final class NightProcessor {
 
-    private let ciContext: CIContext
-    private let device:    MTLDevice
+    private let ciContext:     CIContext
+    private let device:        MTLDevice
+    private let commandQueue:  MTLCommandQueue
 
     // Порог для детекции смаза: кадры с большим движением объектов отбрасываются
     private let blurRejectionThreshold: Float = 60.0
 
     init?() {
-        guard let dev = MTLCreateSystemDefaultDevice() else { return nil }
-        self.device    = dev
-        self.ciContext = CIContext(mtlDevice: dev, options: [.workingColorSpace: NSNull()])
+        guard let dev   = MTLCreateSystemDefaultDevice(),
+              let queue = dev.makeCommandQueue()
+        else { return nil }
+        self.device       = dev
+        self.commandQueue = queue
+        self.ciContext    = CIContext(mtlDevice: dev, options: [.workingColorSpace: NSNull()])
     }
 
     // MARK: - Основной метод
@@ -136,44 +141,60 @@ final class NightProcessor {
         return outputBuf
     }
 
-    // MARK: - Многопроходное шумоподавление
+    // MARK: - Bilateral spatial denoising (MPS)
 
+    /// Edge-preserving bilateral filter через Metal Performance Shaders.
+    /// Для ночных фото (высокое ISO) используем более агрессивные параметры
+    /// чем для дневных: σ_color=0.12, σ_texture=3.5, kernel 9×9.
+    ///
+    /// Принцип: пиксели с похожим цветом усредняются → шум исчезает в небе/коже/стенах.
+    /// Пиксели с разным цветом (настоящий край) не смешиваются → края остаются чёткими.
+    /// Это то, что делает Google Camera для ночных снимков.
     private func applyDenoising(to buffer: CVPixelBuffer, strength: Float) -> CVPixelBuffer? {
-        var image = CIImage(cvPixelBuffer: buffer)
+        let width  = CVPixelBufferGetWidth(buffer)
+        let height = CVPixelBufferGetHeight(buffer)
 
-        // Проход 1: Медианный фильтр (удаляет salt-and-pepper шум)
-        image = image.applyingFilter("CIMedianFilter")
-
-        // Проход 2: Гауссово размытие очень малого радиуса + восстановление через НМ
-        // Это эмулирует guided filter для шумоподавления
-        let blurRadius = CGFloat(strength * 1.8 + 0.5)
-        let blurred    = image.applyingFilter("CIGaussianBlur", parameters: ["inputRadius": blurRadius])
-
-        // НМ: восстанавливаем края из оригинала
-        let sharpenAfterBlur = blurred
-            .applyingFilter("CIUnsharpMask", parameters: [
-                "inputRadius":    blurRadius * 0.5,
-                "inputIntensity": CGFloat(strength * 0.4)
-            ])
-
-        // Проход 3: Noise Reduction фильтр CoreImage (только iOS 12+)
-        let noiseReduced = sharpenAfterBlur
-            .applyingFilter("CINoiseReduction", parameters: [
-                "inputNoiseLevel":  CGFloat(strength * 0.05),
-                "inputSharpness":   CGFloat(0.4 + strength * 0.3)
-            ])
-
-        // Рендерим в новый буфер
-        let w = CVPixelBufferGetWidth(buffer)
-        let h = CVPixelBufferGetHeight(buffer)
         var output: CVPixelBuffer?
         CVPixelBufferCreate(
-            kCFAllocatorDefault, w, h, kCVPixelFormatType_32BGRA,
+            kCFAllocatorDefault, width, height, kCVPixelFormatType_32BGRA,
             [kCVPixelBufferMetalCompatibilityKey as String: true] as CFDictionary,
             &output
         )
         guard let output else { return buffer }
-        ciContext.render(noiseReduced, to: output)
+
+        // Создаём Metal-текстуры из CVPixelBuffer (zero-copy, shared memory)
+        var texCache: CVMetalTextureCache?
+        CVMetalTextureCacheCreate(kCFAllocatorDefault, nil, device, nil, &texCache)
+        guard let texCache else { return buffer }
+
+        func makeTexture(_ buf: CVPixelBuffer) -> MTLTexture? {
+            let w = CVPixelBufferGetWidth(buf), h = CVPixelBufferGetHeight(buf)
+            var ref: CVMetalTexture?
+            CVMetalTextureCacheCreateTextureFromImage(
+                kCFAllocatorDefault, texCache, buf, nil, .bgra8Unorm, w, h, 0, &ref
+            )
+            guard let ref else { return nil }
+            return CVMetalTextureGetTexture(ref)
+        }
+
+        guard let srcTex = makeTexture(buffer),
+              let dstTex = makeTexture(output)
+        else { return buffer }
+
+        // Ночной режим: σ_color чуть больше (больше шума надо убрать),
+        // σ_texture больше (более широкое пространственное сглаживание)
+        let sigmaColor:   Float = 0.10 + strength * 0.04   // 0.10–0.14
+        let sigmaTexture: Float = 2.5  + strength * 2.0    // 2.5–4.5
+        let diameter = sigmaTexture > 3.5 ? 9 : 7
+
+        let blur = MPSImageBilateralBlur(device: device,
+                                         kernelDiameter: diameter,
+                                         sigmaColor: sigmaColor,
+                                         sigmaTexture: sigmaTexture)
+        guard let cmdBuf = commandQueue.makeCommandBuffer() else { return buffer }
+        blur.encode(commandBuffer: cmdBuf, sourceTexture: srcTex, destinationTexture: dstTex)
+        cmdBuf.commit()
+        cmdBuf.waitUntilCompleted()
         return output
     }
 
@@ -196,10 +217,11 @@ final class NightProcessor {
                 "inputEV": CGFloat(0.4 + Double(shadowLift) * 1.5)
             ])
 
-        // Нейтральная насыщенность
+        // Насыщенность: ночью чуть насыщеннее (Night Sight поднимает цвета),
+        // но без CIUnsharpMask — он добавляет ореолы и зернистость.
         let colored = exposed
             .applyingFilter("CIColorControls", parameters: [
-                "inputSaturation": 1.12,
+                "inputSaturation": 1.15,
                 "inputBrightness": 0.0,
                 "inputContrast":   1.04
             ])

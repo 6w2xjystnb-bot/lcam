@@ -145,48 +145,74 @@ final class HDRProcessor {
         return outputBuffer
     }
 
+    // MARK: - Metal: edge-preserving bilateral spatial denoising
+
+    /// Bilateral filter через MPS: убирает шум в однородных зонах (небо, кожа, стены),
+    /// сохраняя настоящие края без ореолов. Это то, что делает Google Camera.
+    /// Запускается ПОСЛЕ temporal merge — двойная зачистка: временна́я + пространственная.
+    private func applyBilateralDenoise(to buffer: CVPixelBuffer) -> CVPixelBuffer? {
+        let width  = CVPixelBufferGetWidth(buffer)
+        let height = CVPixelBufferGetHeight(buffer)
+        guard let output = createPixelBuffer(width: width, height: height) else { return nil }
+
+        let texCache = makeTextureCache()
+        guard let srcTex = makeTexture(from: buffer, cache: texCache, format: .bgra8Unorm),
+              let dstTex = makeTexture(from: output,  cache: texCache, format: .bgra8Unorm)
+        else { return nil }
+
+        // σ_color=0.08: останавливаем blur на границе ≥8% разницы яркости → сохраняем края
+        // σ_texture=2.5: пространственный радиус влияния ~2.5 пикселя → мягкое сглаживание
+        let blur = MPSImageBilateralBlur(device: device,
+                                         kernelDiameter: 7,
+                                         sigmaColor: 0.08,
+                                         sigmaTexture: 2.5)
+        guard let cmdBuf = commandQueue.makeCommandBuffer() else { return nil }
+        blur.encode(commandBuffer: cmdBuf, sourceTexture: srcTex, destinationTexture: dstTex)
+        cmdBuf.commit()
+        cmdBuf.waitUntilCompleted()
+        return output
+    }
+
     // MARK: - CoreImage: тональное отображение + цветовая обработка
 
     private func applyToneMapping(
         to buffer: CVPixelBuffer,
         settings: CameraSettings
     ) async -> CVPixelBuffer? {
-        let (shadowLift, highlightRecovery, saturationBoost, sharpeningStrength) = await MainActor.run {
-            (settings.shadowLift, settings.highlightRecovery, settings.saturationBoost, settings.sharpeningStrength)
+        let (shadowLift, highlightRecovery, saturationBoost) = await MainActor.run {
+            (settings.shadowLift, settings.highlightRecovery, settings.saturationBoost)
         }
 
-        let ci = CIImage(cvPixelBuffer: buffer)
+        // Шаг 1: пространственное шумоподавление (bilateral) перед тональной обработкой.
+        // После temporal merge шум уже снижен в √N раз; bilateral убирает оставшееся.
+        let denoised = applyBilateralDenoise(to: buffer) ?? buffer
 
-        // CIHighlightShadowAdjust — Apple's собственный HDR-фильтр.
-        // inputHighlightAmount < 1.0 восстанавливает пересвет;
-        // inputShadowAmount > 0 поднимает тени.
-        // Не трогает мидтоны и не вносит цветовых сдвигов.
+        let ci = CIImage(cvPixelBuffer: denoised)
+
+        // Шаг 2: тональное отображение.
+        // CIHighlightShadowAdjust — нет цветовых сдвигов, только тени/света.
         let hdrAdjusted = ci
             .applyingFilter("CIHighlightShadowAdjust", parameters: [
                 "inputHighlightAmount": CGFloat(max(0.0, 1.0 - Double(highlightRecovery) * 0.6)),
-                "inputShadowAmount":    CGFloat(shadowLift * 4.0)
+                "inputShadowAmount":    CGFloat(shadowLift * 5.0)
             ])
 
-        // Лёгкое усиление насыщенности без цветового сдвига
+        // Шаг 3: цветовая обработка — насыщенность без тинта.
+        // Contrast 1.03 добавляет лёгкую S-кривую как у GCam без перенасыщения теней.
         let colored = hdrAdjusted
             .applyingFilter("CIColorControls", parameters: [
-                "inputSaturation": CGFloat(1.0 + Double(saturationBoost) * 0.5),
+                "inputSaturation": CGFloat(1.0 + Double(saturationBoost) * 0.6),
                 "inputBrightness": 0.0,
-                "inputContrast":   1.02
+                "inputContrast":   1.03
             ])
 
-        // Адаптивная резкость — небольшой радиус, чтобы не было ореолов
-        let sharpened = colored
-            .applyingFilter("CIUnsharpMask", parameters: [
-                "inputRadius":    1.5,
-                "inputIntensity": CGFloat(sharpeningStrength * 0.55)
-            ])
+        // НЕЛЬЗЯ добавлять CIUnsharpMask: он усиливает шум и создаёт ореолы.
+        // Детали появляются за счёт правильного temporal + spatial denoising выше.
 
         let w = CVPixelBufferGetWidth(buffer)
         let h = CVPixelBufferGetHeight(buffer)
         guard let result = createPixelBuffer(width: w, height: h) else { return buffer }
-
-        ciContext.render(sharpened, to: result)
+        ciContext.render(colored, to: result)
         return result
     }
 
