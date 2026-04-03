@@ -12,28 +12,38 @@ final class BurstCapture: NSObject {
     private let captureMode:  CaptureMode
     private let flashMode:    AVCaptureDevice.FlashMode
 
-    private var collectedBuffers: [Int: CVPixelBuffer] = [:] // порядковый → буфер
+    /// Если не nil — снимаем в RAW; nil → обычный BGRA захват
+    private let rawFormat: OSType?
+
+    private var collectedBuffers: [Int: CVPixelBuffer] = [:]
     private var collectedExif:    ExifMetadata?
     private var pendingCount = 0
     private var fireCount    = 0
 
-    private var progressCallback:    ((Float) -> Void)?
-    private var completionCallback:  (([CVPixelBuffer], ExifMetadata) -> Void)?
+    private var progressCallback:   ((Float) -> Void)?
+    /// Completion: (frames, exif, isRaw)
+    private var completionCallback: (([CVPixelBuffer], ExifMetadata, Bool) -> Void)?
 
     private let captureQueue = DispatchQueue(label: "lcam.burst", qos: .userInitiated)
 
     @MainActor
-    init(photoOutput: AVCapturePhotoOutput, targetFrames: Int, settings: CameraSettings) {
+    init(
+        photoOutput:  AVCapturePhotoOutput,
+        targetFrames: Int,
+        settings:     CameraSettings,
+        rawFormat:    OSType? = nil
+    ) {
         self.photoOutput  = photoOutput
         self.targetFrames = max(1, targetFrames)
         self.captureMode  = settings.captureMode
         self.flashMode    = settings.flashMode
+        self.rawFormat    = rawFormat
     }
 
     // Запуск: сначала делаем один тестовый кадр, потом остальные через небольшой интервал
     func start(
         progress:   @escaping (Float) -> Void,
-        completion: @escaping ([CVPixelBuffer], ExifMetadata) -> Void
+        completion: @escaping ([CVPixelBuffer], ExifMetadata, Bool) -> Void
     ) {
         self.progressCallback   = progress
         self.completionCallback = completion
@@ -79,24 +89,27 @@ final class BurstCapture: NSObject {
     // Для ночного режима первый кадр — с увеличенной выдержкой для оценки,
     // остальные — стандартные короткие для стекинга
     private func buildPhotoSettings(index: Int) -> AVCapturePhotoSettings {
-        // Формат: 32BGRA для прямого доступа к CVPixelBuffer
-        let format: [String: Any] = [
-            kCVPixelBufferPixelFormatTypeKey as String: kCVPixelFormatType_32BGRA
-        ]
-
         let ps: AVCapturePhotoSettings
-        if photoOutput.availablePhotoPixelFormatTypes.contains(kCVPixelFormatType_32BGRA) {
-            ps = AVCapturePhotoSettings(format: format)
+
+        if let rawFmt = rawFormat {
+            // RAW-захват: Bayer-данные без Apple ISP обработки.
+            // Не запрашиваем processedFormat — только чистый RAW.
+            ps = AVCapturePhotoSettings(rawPixelFormatType: rawFmt)
         } else {
-            ps = AVCapturePhotoSettings()
+            // Fallback: 32BGRA (Apple ISP обработано)
+            let bgraFormat: [String: Any] = [
+                kCVPixelBufferPixelFormatTypeKey as String: kCVPixelFormatType_32BGRA
+            ]
+            if photoOutput.availablePhotoPixelFormatTypes.contains(kCVPixelFormatType_32BGRA) {
+                ps = AVCapturePhotoSettings(format: bgraFormat)
+            } else {
+                ps = AVCapturePhotoSettings()
+            }
         }
 
-        ps.isHighResolutionPhotoEnabled  = true
-        ps.photoQualityPrioritization    = .quality
-
-        // Вспышка только для первого кадра (и только если включена)
+        ps.isHighResolutionPhotoEnabled = true
+        ps.photoQualityPrioritization   = .quality
         ps.flashMode = (index == 0 && flashMode == .on) ? .on : .off
-
         return ps
     }
 
@@ -111,11 +124,9 @@ final class BurstCapture: NSObject {
 
         guard pendingCount == 0 else { return }
 
-        // Сортируем буферы по порядковому номеру (пропускаем упавшие кадры)
         let sorted = (0..<total).compactMap { collectedBuffers[$0] }
-
         guard !sorted.isEmpty, let exif = collectedExif else { return }
-        completionCallback?(sorted, exif)
+        completionCallback?(sorted, exif, rawFormat != nil)
     }
 }
 

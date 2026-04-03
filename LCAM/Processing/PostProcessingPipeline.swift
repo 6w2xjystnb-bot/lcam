@@ -20,6 +20,7 @@ final class PostProcessingPipeline: ObservableObject {
     private let aligner:        FrameAligner?
     private let hdrProcessor:   HDRProcessor?
     private let nightProcessor: NightProcessor?
+    private let rawProcessor:   RawProcessor?
     private let ciContext:      CIContext
 
     enum ProcessingStep: String {
@@ -37,6 +38,7 @@ final class PostProcessingPipeline: ObservableObject {
         self.aligner        = FrameAligner()
         self.hdrProcessor   = HDRProcessor()
         self.nightProcessor = NightProcessor()
+        self.rawProcessor   = RawProcessor()
         self.ciContext      = CIContext(options: [.workingColorSpace: NSNull()])
     }
 
@@ -45,7 +47,8 @@ final class PostProcessingPipeline: ObservableObject {
     func process(
         frames: [CVPixelBuffer],
         exif: ExifMetadata,
-        settings: CameraSettings
+        settings: CameraSettings,
+        isRaw: Bool = false
     ) async -> PhotoResult? {
         guard !frames.isEmpty else { return nil }
         let startTime = Date()
@@ -61,15 +64,30 @@ final class PostProcessingPipeline: ObservableObject {
             }
         }
 
+        // --- Шаг 0: Демозаика RAW-кадров (если захват был в RAW) ---
+        // Преобразуем Bayer → sRGB до всей последующей обработки.
+        // Это устраняет артефакты Apple ISP и даёт нам чистые линейные данные.
+        let processedFrames: [CVPixelBuffer]
+        if isRaw, let rawProc = rawProcessor {
+            processingStep = .aligning  // пока нет отдельного статуса для demosaic
+            processedFrames = frames.compactMap { rawProc.demosaic($0) }
+            guard !processedFrames.isEmpty else {
+                // Если демозаика не сработала — fallback на оригинальные кадры
+                return await process(frames: frames, exif: exif, settings: settings, isRaw: false)
+            }
+        } else {
+            processedFrames = frames
+        }
+
         // --- Шаг 1: Выравнивание кадров ---
-        processingStep    = .aligning
+        processingStep     = .aligning
         processingProgress = 0.1
 
         var alignedFrames: [AlignedFrame]
-        if frames.count > 1, let aligner {
-            alignedFrames = await aligner.align(frames: frames)
+        if processedFrames.count > 1, let aligner {
+            alignedFrames = await aligner.align(frames: processedFrames)
         } else {
-            alignedFrames = frames.map {
+            alignedFrames = processedFrames.map {
                 AlignedFrame(pixelBuffer: $0, alignmentScore: 1.0, motionMagnitude: 0.0)
             }
         }

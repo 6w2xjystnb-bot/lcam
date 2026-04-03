@@ -31,6 +31,10 @@ final class CameraManager: NSObject, ObservableObject {
     // Безопасное хранилище для делегата видеопотока (nonisolated-контекст)
     nonisolated(unsafe) private var liveDevice: AVCaptureDevice?
 
+    /// RAW-формат доступный на текущем устройстве; nil — RAW не поддерживается.
+    /// Определяется после конфигурации photoOutput.
+    private(set) var rawPixelFormat: OSType? = nil
+
     // MARK: - Внутренние очереди
     private let sessionQueue  = DispatchQueue(label: "lcam.session",  qos: .userInitiated)
     private let metaQueue     = DispatchQueue(label: "lcam.meta",     qos: .utility)
@@ -133,9 +137,17 @@ final class CameraManager: NSObject, ObservableObject {
         photoOutput.isHighResolutionCaptureEnabled = true
         photoOutput.maxPhotoQualityPrioritization = .quality
 
-        // Активируем LivePhoto и Portrait если поддерживаются
         if photoOutput.isLivePhotoCaptureSupported {
-            photoOutput.isLivePhotoCaptureEnabled = false // отключаем для скорости бёрста
+            photoOutput.isLivePhotoCaptureEnabled = false
+        }
+
+        // Определяем лучший доступный RAW-формат.
+        // Сохраняем в rawPixelFormat; BurstCapture будет его использовать при захвате.
+        rawPixelFormat = RawProcessor.bestRawFormat(from: photoOutput)
+        if let fmt = rawPixelFormat {
+            print("LCAM: RAW capture available, format: \(fmt)")
+        } else {
+            print("LCAM: RAW capture NOT available on this device/session")
         }
     }
 
@@ -280,11 +292,14 @@ final class CameraManager: NSObject, ObservableObject {
 
         let frameCount = settings.captureMode.burstFrameCount(lightLevel: lightLevel)
 
-        // BurstCapture — захватывает N кадров, возвращает CVPixelBuffer[]
+        // BurstCapture захватывает N кадров.
+        // Если устройство поддерживает RAW — снимаем в RAW (Bayer),
+        // иначе fallback на обычный BGRA.
         let burst = BurstCapture(
-            photoOutput: photoOutput,
+            photoOutput:  photoOutput,
             targetFrames: frameCount,
-            settings: settings
+            settings:     settings,
+            rawFormat:    rawPixelFormat   // nil → BGRA fallback
         )
         activeBurst = burst
 
@@ -292,15 +307,20 @@ final class CameraManager: NSObject, ObservableObject {
             progress: { [weak self] p in
                 Task { @MainActor in self?.captureProgress = p }
             },
-            completion: { [weak self] frames, exif in
+            completion: { [weak self] frames, exif, isRaw in
                 guard let self else { return }
-                Task { await self.runPipeline(frames: frames, exif: exif, settings: settings) }
+                Task { await self.runPipeline(frames: frames, exif: exif, settings: settings, isRaw: isRaw) }
             }
         )
     }
 
-    private func runPipeline(frames: [CVPixelBuffer], exif: ExifMetadata, settings: CameraSettings) async {
-        let result = await pipeline.process(frames: frames, exif: exif, settings: settings)
+    private func runPipeline(
+        frames: [CVPixelBuffer],
+        exif: ExifMetadata,
+        settings: CameraSettings,
+        isRaw: Bool = false
+    ) async {
+        let result = await pipeline.process(frames: frames, exif: exif, settings: settings, isRaw: isRaw)
         await MainActor.run {
             self.isCapturing     = false
             self.captureProgress = 0.0
