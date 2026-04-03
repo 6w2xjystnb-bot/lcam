@@ -145,11 +145,11 @@ final class HDRProcessor {
         return outputBuffer
     }
 
-    // MARK: - Metal: edge-preserving bilateral spatial denoising
+    // MARK: - Metal: пространственное шумоподавление (MPS Gaussian)
 
-    /// Bilateral filter через MPS: убирает шум в однородных зонах (небо, кожа, стены),
-    /// сохраняя настоящие края без ореолов. Это то, что делает Google Camera.
-    /// Запускается ПОСЛЕ temporal merge — двойная зачистка: временна́я + пространственная.
+    /// Лёгкое Гауссово размытие через MPSImageGaussianBlur после temporal merge.
+    /// После усреднения N кадров шум уже снижен в √N раз; sigma=1.2 убирает
+    /// остаточное зерно без видимой потери резкости.
     private func applyBilateralDenoise(to buffer: CVPixelBuffer) -> CVPixelBuffer? {
         let width  = CVPixelBufferGetWidth(buffer)
         let height = CVPixelBufferGetHeight(buffer)
@@ -160,12 +160,9 @@ final class HDRProcessor {
               let dstTex = makeTexture(from: output,  cache: texCache, format: .bgra8Unorm)
         else { return nil }
 
-        // σ_color=0.08: останавливаем blur на границе ≥8% разницы яркости → сохраняем края
-        // σ_texture=2.5: пространственный радиус влияния ~2.5 пикселя → мягкое сглаживание
-        let blur = MPSImageBilateralBlur(device: device,
-                                         kernelDiameter: 7,
-                                         sigmaColor: 0.08,
-                                         sigmaTexture: 2.5)
+        // sigma=1.2: радиус ~1 пиксель — убирает высокочастотное зерно,
+        // не размывает детали которые выжили после temporal merge
+        let blur = MPSImageGaussianBlur(device: device, sigma: 1.2)
         guard let cmdBuf = commandQueue.makeCommandBuffer() else { return nil }
         blur.encode(commandBuffer: cmdBuf, sourceTexture: srcTex, destinationTexture: dstTex)
         cmdBuf.commit()

@@ -141,15 +141,11 @@ final class NightProcessor {
         return outputBuf
     }
 
-    // MARK: - Bilateral spatial denoising (MPS)
+    // MARK: - Spatial denoising (MPS Gaussian)
 
-    /// Edge-preserving bilateral filter через Metal Performance Shaders.
-    /// Для ночных фото (высокое ISO) используем более агрессивные параметры
-    /// чем для дневных: σ_color=0.12, σ_texture=3.5, kernel 9×9.
-    ///
-    /// Принцип: пиксели с похожим цветом усредняются → шум исчезает в небе/коже/стенах.
-    /// Пиксели с разным цветом (настоящий край) не смешиваются → края остаются чёткими.
-    /// Это то, что делает Google Camera для ночных снимков.
+    /// Гауссово размытие через MPSImageGaussianBlur — убирает высокочастотный
+    /// шум (зерно) после стекинга кадров. Для ночи sigma больше чем для дня,
+    /// т.к. ночные кадры сняты на высоком ISO и шума изначально больше.
     private func applyDenoising(to buffer: CVPixelBuffer, strength: Float) -> CVPixelBuffer? {
         let width  = CVPixelBufferGetWidth(buffer)
         let height = CVPixelBufferGetHeight(buffer)
@@ -162,7 +158,6 @@ final class NightProcessor {
         )
         guard let output else { return buffer }
 
-        // Создаём Metal-текстуры из CVPixelBuffer (zero-copy, shared memory)
         var texCache: CVMetalTextureCache?
         CVMetalTextureCacheCreate(kCFAllocatorDefault, nil, device, nil, &texCache)
         guard let texCache else { return buffer }
@@ -181,16 +176,9 @@ final class NightProcessor {
               let dstTex = makeTexture(output)
         else { return buffer }
 
-        // Ночной режим: σ_color чуть больше (больше шума надо убрать),
-        // σ_texture больше (более широкое пространственное сглаживание)
-        let sigmaColor:   Float = 0.10 + strength * 0.04   // 0.10–0.14
-        let sigmaTexture: Float = 2.5  + strength * 2.0    // 2.5–4.5
-        let diameter = sigmaTexture > 3.5 ? 9 : 7
-
-        let blur = MPSImageBilateralBlur(device: device,
-                                         kernelDiameter: diameter,
-                                         sigmaColor: sigmaColor,
-                                         sigmaTexture: sigmaTexture)
+        // strength 0..1: sigma от 1.5 (мягко) до 2.5 (агрессивно для тёмных сцен)
+        let sigma = Float(1.5 + Double(strength) * 1.0)
+        let blur = MPSImageGaussianBlur(device: device, sigma: sigma)
         guard let cmdBuf = commandQueue.makeCommandBuffer() else { return buffer }
         blur.encode(commandBuffer: cmdBuf, sourceTexture: srcTex, destinationTexture: dstTex)
         cmdBuf.commit()
