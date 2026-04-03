@@ -9,6 +9,7 @@
 
 import Metal
 import CoreVideo
+import AVFoundation
 import UIKit
 
 final class RawProcessor {
@@ -148,6 +149,13 @@ final class RawProcessor {
         // Формат входа: r16Unorm, 14-бит значения правовыровнены в 16-бит контейнере.
         // Значения: 0–16383 нормализованы как 0.0–0.25 (max_14bit/max_16bit ≈ 0.25).
         // Нужен scale × 4.0 чтобы привести к полному диапазону [0,1].
+        // Вспомогательная функция: сэмпл Bayer с зажимом к границе
+        float bayerSample(texture2d<float, access::read> bayer, int x, int y, int W, int H) {
+            int cx = clamp(x, 0, W-1);
+            int cy = clamp(y, 0, H-1);
+            return bayer.read(uint2(cx, cy)).r * 4.0;  // 14-бит правовыровн. → [0,1]
+        }
+
         kernel void demosaicBayer(
             texture2d<float, access::read>  bayer   [[texture(0)]],
             texture2d<float, access::write> output  [[texture(1)]],
@@ -158,41 +166,36 @@ final class RawProcessor {
             int H = int(bayer.get_height());
             if (int(gid.x) >= W || int(gid.y) >= H) return;
 
-            // Сэмпл из Bayer-текстуры с зажимом к границе
-            auto smp = [&](int px, int py) -> float {
-                uint2 c = uint2(clamp(px, 0, W-1), clamp(py, 0, H-1));
-                return bayer.read(c).r * 4.0;  // 14-бит → полный [0,1]
-            };
-
             int x = int(gid.x), y = int(gid.y);
             int col = x & 1, row = y & 1;
 
-            // Определяем какой канал в этом пикселе (для RGGB):
-            // ch=0:R  ch=1:Gr  ch=2:Gb  ch=3:B
-            // Для других паттернов применяем XOR-сдвиг
             int ch = col + row * 2;
-            if (pattern == 1) { ch = 3 - ch; }          // BGGR: инверсия
-            else if (pattern == 2) { ch = ch ^ 1; }     // GRBG: своп R↔Gr, B↔Gb
-            else if (pattern == 3) { ch = ch ^ 2; }     // GBRG: своп Gr↔Gb
+            if (pattern == 1) { ch = 3 - ch; }
+            else if (pattern == 2) { ch = ch ^ 1; }
+            else if (pattern == 3) { ch = ch ^ 2; }
 
             float R, G, B;
 
-            if (ch == 0) {          // R-пиксель
-                R = smp(x, y);
-                G = (smp(x-1,y)+smp(x+1,y)+smp(x,y-1)+smp(x,y+1)) * 0.25;
-                B = (smp(x-1,y-1)+smp(x+1,y-1)+smp(x-1,y+1)+smp(x+1,y+1)) * 0.25;
-            } else if (ch == 3) {   // B-пиксель
-                B = smp(x, y);
-                G = (smp(x-1,y)+smp(x+1,y)+smp(x,y-1)+smp(x,y+1)) * 0.25;
-                R = (smp(x-1,y-1)+smp(x+1,y-1)+smp(x-1,y+1)+smp(x+1,y+1)) * 0.25;
-            } else if (ch == 1) {   // Gr (G в строке R)
-                G = smp(x, y);
-                R = (smp(x-1,y) + smp(x+1,y)) * 0.5;
-                B = (smp(x,y-1) + smp(x,y+1)) * 0.5;
-            } else {                // Gb (G в строке B)
-                G = smp(x, y);
-                B = (smp(x-1,y) + smp(x+1,y)) * 0.5;
-                R = (smp(x,y-1) + smp(x,y+1)) * 0.5;
+            if (ch == 0) {
+                R = bayerSample(bayer, x,   y,   W, H);
+                G = (bayerSample(bayer,x-1,y,W,H)+bayerSample(bayer,x+1,y,W,H)+
+                     bayerSample(bayer,x,y-1,W,H)+bayerSample(bayer,x,y+1,W,H)) * 0.25;
+                B = (bayerSample(bayer,x-1,y-1,W,H)+bayerSample(bayer,x+1,y-1,W,H)+
+                     bayerSample(bayer,x-1,y+1,W,H)+bayerSample(bayer,x+1,y+1,W,H)) * 0.25;
+            } else if (ch == 3) {
+                B = bayerSample(bayer, x,   y,   W, H);
+                G = (bayerSample(bayer,x-1,y,W,H)+bayerSample(bayer,x+1,y,W,H)+
+                     bayerSample(bayer,x,y-1,W,H)+bayerSample(bayer,x,y+1,W,H)) * 0.25;
+                R = (bayerSample(bayer,x-1,y-1,W,H)+bayerSample(bayer,x+1,y-1,W,H)+
+                     bayerSample(bayer,x-1,y+1,W,H)+bayerSample(bayer,x+1,y+1,W,H)) * 0.25;
+            } else if (ch == 1) {
+                G = bayerSample(bayer, x,   y,   W, H);
+                R = (bayerSample(bayer,x-1,y,W,H) + bayerSample(bayer,x+1,y,W,H)) * 0.5;
+                B = (bayerSample(bayer,x,y-1,W,H) + bayerSample(bayer,x,y+1,W,H)) * 0.5;
+            } else {
+                G = bayerSample(bayer, x,   y,   W, H);
+                B = (bayerSample(bayer,x-1,y,W,H) + bayerSample(bayer,x+1,y,W,H)) * 0.5;
+                R = (bayerSample(bayer,x,y-1,W,H) + bayerSample(bayer,x,y+1,W,H)) * 0.5;
             }
 
             // Коррекция чёрного уровня: типичный iPhone = 256 отсчётов в 14-бит

@@ -3,6 +3,7 @@
 import AVFoundation
 import UIKit
 import Combine
+import CoreLocation
 
 @MainActor
 final class CameraManager: NSObject, ObservableObject {
