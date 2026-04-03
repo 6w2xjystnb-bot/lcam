@@ -156,28 +156,38 @@ final class HDRProcessor {
 
         let ci = CIImage(cvPixelBuffer: buffer)
 
-        // Шаг 1: Кривая тонального отображения (S-кривая)
-        // Подъём теней + восстановление светов — как в GCam
-        let toneCurve = ci
+        // Шаг 1: Лёгкое шумоподавление до тональной обработки
+        // (после merge остаётся мелкий зернистый шум)
+        let denoised = ci
+            .applyingFilter("CINoiseReduction", parameters: [
+                "inputNoiseLevel": 0.02,
+                "inputSharpness":  0.6
+            ])
+
+        // Шаг 2: Тональная кривая — подъём теней + мидтонов (GCam-стиль)
+        // Point2 на (0.45, 0.55) даёт +10% яркость в мидтонах без пересвета
+        let sl = CGFloat(shadowLift)
+        let hr = CGFloat(highlightRecovery)
+        let toneCurve = denoised
             .applyingFilter("CIToneCurve", parameters: [
                 "inputPoint0": CIVector(x: 0.0,  y: 0.0),
-                "inputPoint1": CIVector(x: 0.15, y: CGFloat(0.15 + Double(shadowLift))),
-                "inputPoint2": CIVector(x: 0.5,  y: 0.5),
-                "inputPoint3": CIVector(x: 0.85, y: CGFloat(0.85 - Double(highlightRecovery) * 0.1)),
+                "inputPoint1": CIVector(x: 0.1,  y: 0.1  + sl * 1.2),
+                "inputPoint2": CIVector(x: 0.45, y: 0.53 + sl * 0.25),
+                "inputPoint3": CIVector(x: 0.82, y: 0.84 - hr * 0.06),
                 "inputPoint4": CIVector(x: 1.0,  y: 1.0)
             ])
 
-        // Шаг 2: Цветовой баланс — небольшой буст насыщенности (как GCam)
+        // Шаг 3: Цветовой баланс — насыщенность как GCam
         let saturated = toneCurve
             .applyingFilter("CIVibrance", parameters: [
-                "inputAmount": CGFloat(saturationBoost * 2.5)
+                "inputAmount": CGFloat(saturationBoost * 2.2)
             ])
 
-        // Шаг 3: Локальное улучшение контраста через нерезкое маскирование
+        // Шаг 4: Резкость
         let sharpened = saturated
             .applyingFilter("CIUnsharpMask", parameters: [
-                "inputRadius":    2.5,
-                "inputIntensity": CGFloat(sharpeningStrength * 0.9)
+                "inputRadius":    2.0,
+                "inputIntensity": CGFloat(sharpeningStrength * 0.85)
             ])
 
         // Финальный рендер в новый CVPixelBuffer
