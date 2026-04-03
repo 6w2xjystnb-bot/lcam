@@ -100,16 +100,18 @@ final class BurstCapture: NSObject {
         return ps
     }
 
-    // Проверяем — собрали ли все кадры
+    // Проверяем — дождались ли всех ответов от AVFoundation
+    // Используем pendingCount == 0, а не received == total:
+    // один упавший кадр не должен блокировать весь бёрст
     private func checkCompletion() {
         let received = collectedBuffers.count
         let total    = targetFrames
 
-        progressCallback?(Float(received) / Float(total))
+        progressCallback?(Float(received) / Float(max(total, 1)))
 
-        guard received == total, pendingCount == 0 else { return }
+        guard pendingCount == 0 else { return }
 
-        // Сортируем буферы по порядковому номеру
+        // Сортируем буферы по порядковому номеру (пропускаем упавшие кадры)
         let sorted = (0..<total).compactMap { collectedBuffers[$0] }
 
         guard !sorted.isEmpty, let exif = collectedExif else { return }
@@ -148,8 +150,8 @@ extension BurstCapture: AVCapturePhotoCaptureDelegate {
             }
         }
 
-        // Заполняем EXIF из первого кадра
-        if index == 0 {
+        // Заполняем EXIF из первого успешно полученного кадра
+        if collectedExif == nil {
             collectedExif = ExifMetadata(from: photo, captureMode: captureMode)
         }
 
