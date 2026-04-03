@@ -20,8 +20,9 @@ final class HDRProcessor {
     private let commandQueue: MTLCommandQueue
 
     // Пайплайны Metal
-    private let mergePipeline:   MTLComputePipelineState
-    private let tonemapPipeline: MTLComputePipelineState
+    private let mergePipeline:     MTLComputePipelineState
+    private let normalizePipeline: MTLComputePipelineState
+    private let tonemapPipeline:   MTLComputePipelineState
 
     // CoreImage контекст для финальных фильтров (работает на GPU)
     private let ciContext: CIContext
@@ -34,12 +35,14 @@ final class HDRProcessor {
         self.commandQueue = queue
         self.ciContext    = CIContext(mtlDevice: dev, options: [.workingColorSpace: NSNull()])
 
-        guard let merge   = HDRProcessor.compilePipeline(device: dev, functionName: "mergeFrames"),
-              let tonemap = HDRProcessor.compilePipeline(device: dev, functionName: "localToneMap")
+        guard let merge     = HDRProcessor.compilePipeline(device: dev, functionName: "mergeFrames"),
+              let normalize = HDRProcessor.compilePipeline(device: dev, functionName: "normalizeMerge"),
+              let tonemap   = HDRProcessor.compilePipeline(device: dev, functionName: "localToneMap")
         else { return nil }
 
-        self.mergePipeline   = merge
-        self.tonemapPipeline = tonemap
+        self.mergePipeline     = merge
+        self.normalizePipeline = normalize
+        self.tonemapPipeline   = tonemap
     }
 
     // MARK: - Главный метод HDR+ слияния
@@ -125,9 +128,8 @@ final class HDRProcessor {
 
         // Финальный проход: normalizeMerge → делим на сумму весов → пишем в outputBuffer
         if let outTex = makeTexture(from: outputBuffer, cache: texCache, format: .bgra8Unorm),
-           let normalPipeline = HDRProcessor.compilePipeline(device: device, functionName: "normalizeMerge"),
            let encoder = cmdBuf.makeComputeCommandEncoder() {
-            encoder.setComputePipelineState(normalPipeline)
+            encoder.setComputePipelineState(normalizePipeline)
             encoder.setTexture(accumRGB, index: 0)
             encoder.setTexture(accumW,   index: 1)
             encoder.setTexture(outTex,   index: 2)
@@ -194,17 +196,31 @@ final class HDRProcessor {
         let desc = MTLTextureDescriptor.texture2DDescriptor(
             pixelFormat: .rgba32Float, width: width, height: height, mipmapped: false
         )
-        desc.usage      = [.shaderRead, .shaderWrite]
-        desc.storageMode = .private
+        desc.usage       = [.shaderRead, .shaderWrite]
+        desc.storageMode = .shared  // CPU-accessible так что можно явно обнулить
 
         let wDesc = MTLTextureDescriptor.texture2DDescriptor(
             pixelFormat: .r32Float, width: width, height: height, mipmapped: false
         )
-        wDesc.usage      = [.shaderRead, .shaderWrite]
-        wDesc.storageMode = .private
+        wDesc.usage       = [.shaderRead, .shaderWrite]
+        wDesc.storageMode = .shared
 
         guard let rgb = device.makeTexture(descriptor: desc),
               let w   = device.makeTexture(descriptor: wDesc) else { return nil }
+
+        // Явное обнуление: начальное содержимое Metal-текстур не определено по спецификации.
+        // Без этого аккумулятор накапливает мусор → артефакты в слитом кадре.
+        let rgbZeros = [Float](repeating: 0, count: width * height * 4)
+        let wZeros   = [Float](repeating: 0, count: width * height)
+        rgb.replace(region: MTLRegionMake2D(0, 0, width, height),
+                    mipmapLevel: 0,
+                    withBytes: rgbZeros,
+                    bytesPerRow: width * 4 * MemoryLayout<Float>.size)
+        w.replace(region: MTLRegionMake2D(0, 0, width, height),
+                  mipmapLevel: 0,
+                  withBytes: wZeros,
+                  bytesPerRow: width * MemoryLayout<Float>.size)
+
         return (rgb, w)
     }
 

@@ -29,13 +29,13 @@ enum CaptureMode: String, CaseIterable, Identifiable {
     func burstFrameCount(lightLevel: Float) -> Int {
         switch self {
         case .auto:
-            // Автоматически: чем темнее — тем больше кадров
+            // Меньше кадров в светлое время = меньше риска смаза от неточного alignment
             switch lightLevel {
-            case 0.0..<0.05: return 30
-            case 0.05..<0.15: return 20
-            case 0.15..<0.3:  return 12
-            case 0.3..<0.6:   return 8
-            default:           return 4
+            case 0.0..<0.05:  return 20
+            case 0.05..<0.15: return 12
+            case 0.15..<0.3:  return 6
+            case 0.3..<0.6:   return 4
+            default:          return 2
             }
         case .hdrPlus:  return 12
         case .night:    return 30

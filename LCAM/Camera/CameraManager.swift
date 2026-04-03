@@ -184,7 +184,9 @@ final class CameraManager: NSObject, ObservableObject {
 
         availableZoomStops = stops
         baseZoomFactor     = wideZoom
-        setZoom(wideZoom)
+        // animated: false — мгновенно, иначе ramp() занимает секунды
+        // и фото снимается до окончания анимации (= на 0.5x UW)
+        setZoom(wideZoom, animated: false)
     }
 
     // MARK: - Зум

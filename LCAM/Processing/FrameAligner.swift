@@ -80,7 +80,9 @@ final class FrameAligner {
             return AlignedFrame(pixelBuffer: source, alignmentScore: 0.0, motionMagnitude: motionMagnitude)
         }
 
-        // 4. Применяем warp через Metal
+        // 4. Применяем warp через Metal.
+        // Шейдер использует нормализованные UV для чтения flow-текстуры,
+        // поэтому размер flow-буфера не обязан совпадать с источником.
         guard let warped = warpFrame(source: source, flow: flowBuffer) else {
             return AlignedFrame(pixelBuffer: source, alignmentScore: 0.7, motionMagnitude: motionMagnitude)
         }
@@ -237,7 +239,7 @@ final class FrameAligner {
             int h = int(tex.get_height()) - 1;
             float2 f  = floor(coord);
             float2 fr = coord - f;
-            int2 p00  = clamp(int2(f),            int2(0), int2(w, h));
+            int2 p00  = clamp(int2(f),             int2(0), int2(w, h));
             int2 p10  = clamp(int2(f) + int2(1,0), int2(0), int2(w, h));
             int2 p01  = clamp(int2(f) + int2(0,1), int2(0), int2(w, h));
             int2 p11  = clamp(int2(f) + int2(1,1), int2(0), int2(w, h));
@@ -249,16 +251,20 @@ final class FrameAligner {
         }
 
         kernel void warpFrame(
-            texture2d<float, access::read>  srcTex  [[texture(0)]],
-            texture2d<float, access::read>  flowTex [[texture(1)]],
-            texture2d<float, access::write> dstTex  [[texture(2)]],
+            texture2d<float, access::read>   srcTex  [[texture(0)]],
+            texture2d<float, access::sample> flowTex [[texture(1)]],
+            texture2d<float, access::write>  dstTex  [[texture(2)]],
             uint2 gid [[thread_position_in_grid]]
         ) {
             if (gid.x >= dstTex.get_width() || gid.y >= dstTex.get_height()) return;
 
-            // Карта потока Vision хранит смещения в нормализованных координатах [-1..1]
-            // Конвертируем в пиксельные смещения
-            float2 flow = flowTex.read(gid).rg;
+            // Нормализованные UV — работает при любом разрешении flow-текстуры
+            // (Vision часто возвращает уменьшенный буфер для полноразмерных фото)
+            float2 uv = (float2(gid) + 0.5) / float2(dstTex.get_width(), dstTex.get_height());
+            constexpr sampler s(coord::normalized, filter::linear, address::clamp_to_edge);
+            float2 flow = flowTex.sample(s, uv).rg;
+
+            // Карта потока Vision: нормализованные смещения [-1..1] → пиксельные
             float2 srcCoord = float2(gid) - float2(
                 flow.x * float(srcTex.get_width()),
                 flow.y * float(srcTex.get_height())
