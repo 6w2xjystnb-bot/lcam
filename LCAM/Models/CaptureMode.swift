@@ -31,11 +31,11 @@ enum CaptureMode: String, CaseIterable, Identifiable {
         case .auto:
             // Меньше кадров в светлое время = меньше риска смаза от неточного alignment
             switch lightLevel {
-            case 0.0..<0.05:  return 16  // ночь: много кадров для SNR
-            case 0.05..<0.15: return 8
-            case 0.15..<0.3:  return 4
-            case 0.3..<0.6:   return 2
-            default:          return 1   // хороший свет: 1 кадр, без merge-блюра
+            case 0.0..<0.05:  return 20  // глубокая ночь
+            case 0.05..<0.15: return 12  // сумерки
+            case 0.15..<0.3:  return 8   // пасмурно
+            case 0.3..<0.6:   return 6   // облачно
+            default:          return 4   // хороший свет: HDR+ merge, короткие выдержки
             }
         case .hdrPlus:  return 12
         case .night:    return 30
