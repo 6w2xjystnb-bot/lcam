@@ -151,9 +151,8 @@ extension BurstCapture: AVCapturePhotoCaptureDelegate {
         pendingCount -= 1
 
         if photo.isRawPhoto {
-            // RAW кадр: обрабатываем через CIRAWFilter (Apple demosaic без ISP артефактов).
-            // sharpnessAmount=0 и noiseReductionAmount=0 — наш HDR+ merge сделает это лучше.
-            if let data = photo.fileDataRepresentation(),
+            if #available(iOS 15.0, *),
+               let data = photo.fileDataRepresentation(),
                let buffer = BurstCapture.processRaw(data: data) {
                 collectedBuffers[index] = buffer
             }
@@ -203,21 +202,17 @@ extension BurstCapture {
     /// - Правильная демозаика без лесенки (Apple алгоритм)
     /// - Правильные цвета из DNG color matrix
     /// - sharpness=0, noiseReduction=0 → HDR+ merge сделает лучше
+    @available(iOS 15.0, *)
     static func processRaw(data: Data) -> CVPixelBuffer? {
-        guard #available(iOS 15.0, *),
-              let rawFilter = CIRAWFilter(imageData: data, identifierHint: "public.camera-raw-image")
-        else {
-            // Fallback iOS 14: просто вернём nil, BurstCapture использует BGRA
-            return nil
-        }
+        guard let rawFilter = CIRAWFilter(imageData: data, identifierHint: "public.camera-raw-image")
+        else { return nil }
 
-        rawFilter.sharpnessAmount      = 0.0  // без шарпенинга — HDR+ merge сделает
-        rawFilter.noiseReductionAmount = 0.0  // без NR — temporal merge лучше
-        rawFilter.boostAmount          = 1.0  // нейтральный тон-маппинг
+        rawFilter.sharpnessAmount      = 0.0
+        rawFilter.noiseReductionAmount = 0.0
+        rawFilter.boostAmount          = 1.0
 
         guard let ciImage = rawFilter.outputImage else { return nil }
 
-        // Конвертируем CIImage → CVPixelBuffer (BGRA)
         let w = Int(ciImage.extent.width)
         let h = Int(ciImage.extent.height)
         var buf: CVPixelBuffer?
