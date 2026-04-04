@@ -147,12 +147,9 @@ final class CameraManager: NSObject, ObservableObject {
 
         // Определяем лучший доступный RAW-формат.
         // Сохраняем в rawPixelFormat; BurstCapture будет его использовать при захвате.
-        rawPixelFormat = RawProcessor.bestRawFormat(from: photoOutput)
-        if let fmt = rawPixelFormat {
-            print("LCAM: RAW capture available, format: \(fmt)")
-        } else {
-            print("LCAM: RAW capture NOT available on this device/session")
-        }
+        // RAW отключён: bilinear demosaicing даёт лесенку на краях и blur.
+        // Apple ISP качественнее — включим RAW когда будет AHD/VNG демозаика.
+        rawPixelFormat = nil
     }
 
     private func addVideoDataOutput() {

@@ -184,19 +184,19 @@ final class HDRProcessor {
 
         // Шаг 2: тональное отображение.
         // CIHighlightShadowAdjust — нет цветовых сдвигов, только тени/света.
+        // Минимальная коррекция: только тени/света без изменения цвета.
+        // Apple ISP уже применил насыщенность и контраст — не дублируем.
         let hdrAdjusted = ci
             .applyingFilter("CIHighlightShadowAdjust", parameters: [
-                "inputHighlightAmount": CGFloat(max(0.0, 1.0 - Double(highlightRecovery) * 0.6)),
-                "inputShadowAmount":    CGFloat(shadowLift * 5.0)
+                "inputHighlightAmount": CGFloat(max(0.0, 1.0 - Double(highlightRecovery) * 0.5)),
+                "inputShadowAmount":    CGFloat(shadowLift * 3.0)
             ])
 
-        // Шаг 3: цветовая обработка — насыщенность без тинта.
-        // Contrast 1.03 добавляет лёгкую S-кривую как у GCam без перенасыщения теней.
         let colored = hdrAdjusted
             .applyingFilter("CIColorControls", parameters: [
-                "inputSaturation": CGFloat(1.0 + Double(saturationBoost) * 0.6),
+                "inputSaturation": CGFloat(1.0 + Double(saturationBoost) * 0.2), // мягче
                 "inputBrightness": 0.0,
-                "inputContrast":   1.03
+                "inputContrast":   1.01  // почти нейтральный
             ])
 
         // НЕЛЬЗЯ добавлять CIUnsharpMask: он усиливает шум и создаёт ореолы.
