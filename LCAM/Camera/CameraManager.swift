@@ -212,6 +212,7 @@ final class CameraManager: NSObject, ObservableObject {
 
     // MARK: - Зум
     func setZoom(_ factor: CGFloat, animated: Bool = true) {
+        zslBuffer.clear()
         guard let device = deviceInput?.device else { return }
         sessionQueue.async {
             do {
@@ -307,6 +308,7 @@ final class CameraManager: NSObject, ObservableObject {
         // RAW для ZSL недоступен (видеопоток не поддерживает Bayer), поэтому isRaw=false.
         if rawPixelFormat == nil, zslBuffer.isReady(for: frameCount) {
             let zslFrames = zslBuffer.takeLast(frameCount)
+            zslBuffer.clear()
             // Заглушка EXIF: реальные данные недоступны из видеопотока
             let exif = ExifMetadata(
                 iso: Int(currentISO), shutterSpeed: currentShutter,
