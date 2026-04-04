@@ -306,23 +306,8 @@ final class CameraManager: NSObject, ObservableObject {
         // Если буфер уже содержит достаточно кадров — используем их сразу.
         // Кадры были сняты ДО нажатия кнопки (= устройство было стабильно).
         // RAW для ZSL недоступен (видеопоток не поддерживает Bayer), поэтому isRaw=false.
-        if rawPixelFormat == nil, zslBuffer.isReady(for: frameCount) {
-            let zslFrames = zslBuffer.takeLast(frameCount)
-            zslBuffer.clear()
-            // Заглушка EXIF: реальные данные недоступны из видеопотока
-            let exif = ExifMetadata(
-                iso: Int(currentISO), shutterSpeed: currentShutter,
-                aperture: currentAperture, focalLength: 26.0,
-                brightnessValue: Double(lightLevel * 20.0 - 4.0),
-                flashFired: false, colorSpace: "sRGB",
-                captureMode: settings.captureMode, location: nil
-            )
-            Task { await self.runPipeline(frames: zslFrames, exif: exif, settings: settings, isRaw: false) }
-            return
-        }
-
-        // ── Burst путь: обычный захват через AVCapturePhotoOutput ──────────────
-        // Используется когда ZSL недоступен или когда захватываем в RAW.
+        // ZSL отключён: видеокадры имеют худшее качество чем фото-burst.
+        // Всегда используем AVCapturePhotoOutput для максимального качества.
         let burst = BurstCapture(
             photoOutput:  photoOutput,
             targetFrames: frameCount,

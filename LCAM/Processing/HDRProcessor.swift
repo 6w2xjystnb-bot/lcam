@@ -180,11 +180,7 @@ final class HDRProcessor {
             (settings.shadowLift, settings.highlightRecovery, settings.saturationBoost)
         }
 
-        // Шаг 1: пространственное шумоподавление (bilateral) перед тональной обработкой.
-        // После temporal merge шум уже снижен в √N раз; bilateral убирает оставшееся.
-        let denoised = applyBilateralDenoise(to: buffer) ?? buffer
-
-        let ci = CIImage(cvPixelBuffer: denoised)
+        let ci = CIImage(cvPixelBuffer: buffer)
 
         // Шаг 2: тональное отображение.
         // CIHighlightShadowAdjust — нет цветовых сдвигов, только тени/света.
