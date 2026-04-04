@@ -147,9 +147,13 @@ final class CameraManager: NSObject, ObservableObject {
 
         // Определяем лучший доступный RAW-формат.
         // Сохраняем в rawPixelFormat; BurstCapture будет его использовать при захвате.
-        // RAW отключён: bilinear demosaicing даёт лесенку на краях и blur.
-        // Apple ISP качественнее — включим RAW когда будет AHD/VNG демозаика.
-        rawPixelFormat = nil
+        // CIRAWFilter (iOS 15+): Apple's demosaicing без ISP шарпенинга/NR.
+        // Даёт чистые данные для нашего HDR+ merge.
+        if #available(iOS 15.0, *) {
+            rawPixelFormat = RawProcessor.bestRawFormat(from: photoOutput)
+        } else {
+            rawPixelFormat = nil
+        }
     }
 
     private func addVideoDataOutput() {
